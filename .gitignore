@@ -1,0 +1,15 @@
+# Recorded market data
+/data/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# OS
+.DS_Store
