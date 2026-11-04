@@ -23,6 +23,29 @@ make docker-logs
 make docker-down
 ```
 
+## Development data and the held-out week
+
+| Period | Dates (UTC) | Use |
+| --- | --- | --- |
+| Development | Everything before 2026-12-01 00:00 | All research. First results use walk-forward evaluation on this data only |
+| Held out | 2026-12-01 to 2026-12-07 | The final evaluation in milestone 5 |
+
+The cutoff was fixed on 2026-11-04, before any results existed, and it is enforced in code. `touchstone.data.load` is how research code reads recordings, and it refuses any timestamp from 2026-12-01 onward unless it is explicitly given `final=True`, which research commands expose as `--final`:
+
+```bash
+uv run python -m touchstone.data summary BTC-USD                    # development data only
+uv run python -m touchstone.data summary BTC-USD --end 2026-12-08   # refused
+uv run python -m touchstone.data summary BTC-USD --end 2026-12-08 --final
+```
+
+Held-out files are not even opened without the flag, and rows are also filtered on all three clocks, so clock skew cannot let a later row through. A test fails if any module outside the recorder reads recordings around the loader. The recorder's own `verify` can read held-out days, because it reports integrity counts and no prices, and the recording has to stay checkable during that week.
+
+## Limitations
+
+- **The book is conflated at 50 ms.** Coinbase's public level-2 feed sends a batch about every 50 ms, with one row per changed level holding its final size and a single event time. Changes inside a batch cannot be seen, and an order added and filled within one batch never appears. So the queue estimator sees net changes at each level: trades are visible with microsecond timestamps, but cancellations can only be inferred as the drop in size not explained by trades, and additions in the same batch can hide them. For the same reason, the latency sweep cannot resolve book changes finer than about 50 ms, so differences between very small delays say little. Measuring the resulting error needs Coinbase's authenticated full channel.
+- **Latency samples are not order entry.** Round trips are WebSocket pings to the market-data endpoint from wherever the recorder runs. They measure the network, not the path through order entry and the matching engine, and they depend on the recorder's location.
+- **Recordings have outages.** Connections drop from time to time, and the book cannot be rebuilt across a break, so each one starts a new session. The trade snapshot on reconnect usually fills short breaks, and `verify` counts any trades still missing.
+
 ## Recorder
 
 The recorder subscribes to the `level2`, `market_trades`, and `heartbeats` channels of Coinbase's [Advanced Trade WebSocket feed](https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/websocket/websocket-overview), which is public and needs no credentials. It writes one Parquet file per product per day.
@@ -86,7 +109,7 @@ Rows are in arrival order. To replay, take one `session` at a time and read `sna
 - **Use both trade labels.** Filtering on `event == "trade"` silently loses real trades. Take `trade` and `trade_snapshot` together. Repeats are already removed, and trade ids rise by one per product, so `verify` can count any that are missing.
 - **Sort trades by `exchange_ts_ns`.** Coinbase lists each batch newest first.
 - **Keep what was known separate from what happened.** Trades are batched over 250 ms, so a trade's `local_ts_ns` can trail its `exchange_ts_ns` by that much. Anything simulating what a strategy could have known at a given moment has to use the local time, or it will see trades before they could have arrived.
-- **The book is conflated.** Book changes arrive every 50 ms, with one row per level holding its final size and a single event time. Changes inside a batch are invisible: an order added and filled within 50 ms never appears, and a drop in size cannot be split into fills and cancellations without the trades.
+- **The book is conflated at 50 ms.** See [Limitations](#limitations).
 
 ### Health log
 

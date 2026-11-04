@@ -146,12 +146,20 @@ def _day_inputs(root: Path, product: str, day: str) -> list[Path]:
     return inputs
 
 
-def read_day(root: Path, product: str, day: str) -> pl.LazyFrame:
-    """Reads a day's rows, whether or not they have been merged into the daily file yet."""
-    inputs = _day_inputs(root, product, day)
+def scan_days(root: Path, product: str, days: list[str]) -> pl.LazyFrame:
+    """Reads days' rows, whether or not they have been merged into their daily files yet.
+
+    This does not enforce the held-out period, so it is for the recorder's own tooling. Research
+    code reads through ``touchstone.data.load``.
+    """
+    inputs = [path for day in days for path in _day_inputs(root, product, day)]
     if not inputs:
-        raise FileNotFoundError(f"no data for {product} on {day} under {root}")
+        raise FileNotFoundError(f"no data for {product} on {', '.join(days)} under {root}")
     return _merged(inputs)
+
+
+def read_day(root: Path, product: str, day: str) -> pl.LazyFrame:
+    return scan_days(root, product, [day])
 
 
 def spooled_days(root: Path, product: str) -> list[str]:
@@ -159,6 +167,11 @@ def spooled_days(root: Path, product: str) -> list[str]:
     if not directory.exists():
         return []
     return sorted(p.name for p in directory.iterdir() if p.is_dir() and _DAY.match(p.name))
+
+
+def recorded_days(root: Path, product: str) -> list[str]:
+    daily = {p.stem for p in (root / product).glob("*.parquet") if _DAY.match(p.stem)}
+    return sorted(daily | set(spooled_days(root, product)))
 
 
 def _finish_interrupted_merge(root: Path, product: str, day: str) -> None:
