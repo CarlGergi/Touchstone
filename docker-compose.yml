@@ -1,0 +1,14 @@
+services:
+  recorder:
+    build: .
+    image: touchstone-recorder
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./data:/data
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
