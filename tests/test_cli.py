@@ -142,3 +142,14 @@ async def test_compact_command_merges_past_days_only(tmp_path, capsys):
     assert (tmp_path / "BTC-USD" / "2020-01-01.parquet").exists()
     assert not (tmp_path / "BTC-USD" / f"{today()}.parquet").exists()
     assert "2020-01-01: 1 rows" in capsys.readouterr().out
+
+
+async def test_compact_can_include_today_once_recording_has_stopped(tmp_path, capsys):
+    store = DayStore(tmp_path, "BTC-USD")
+    row = (10, 5, 1, 1, 0, "snapshot", "bid", 99, 5, None)
+    store.append(today(), [row])
+    await store.flush()
+    args = ["compact", "--data-dir", str(tmp_path), "--include-today"]
+    assert await asyncio.to_thread(main, args) == 0
+    assert (tmp_path / "BTC-USD" / f"{today()}.parquet").exists()
+    assert not list((tmp_path / ".spool").glob("BTC-USD/*/part-*.parquet"))

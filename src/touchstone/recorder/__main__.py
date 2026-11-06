@@ -13,7 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from touchstone.recorder.config import DEFAULT_PRODUCTS, DEFAULT_URL, RecorderConfig
-from touchstone.recorder.health import check_status
+from touchstone.recorder.health import check_status, read_health
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -38,6 +38,20 @@ def _build_parser() -> argparse.ArgumentParser:
 
     compact = commands.add_parser("compact", help="merge finished days into their daily files")
     compact.add_argument("--data-dir", type=Path, default=Path("data"))
+    compact.add_argument(
+        "--include-today",
+        action="store_true",
+        help="also merge today, which is only safe once recording has stopped for good",
+    )
+
+    report = commands.add_parser("report", help="summarize the health log")
+    report.add_argument("--data-dir", type=Path, default=Path("data"))
+    report.add_argument("--since", help="only include this UTC day (YYYY-MM-DD) onward")
+
+    daily = commands.add_parser("daily-summary", help="one finished day's counts, for the push")
+    daily.add_argument("day")
+    daily.add_argument("--data-dir", type=Path, default=Path("data"))
+    daily.add_argument("--products", default=",".join(DEFAULT_PRODUCTS))
 
     verify = commands.add_parser("verify", help="check a recorded day's invariants")
     verify.add_argument("product")
@@ -89,13 +103,29 @@ def _command_compact(args: argparse.Namespace) -> int:
         products = [p.name for p in spool.iterdir() if p.is_dir()] if spool.exists() else []
         for product in products:
             for day in storage.spooled_days(args.data_dir, product):
-                if day < today:
+                if day < today or args.include_today:
                     rows = storage.compact_day(args.data_dir, product, day)
                     print(f"{product} {day}: {rows} rows")
     return 0
 
 
+def _command_report(args: argparse.Namespace) -> int:
+    from touchstone.recorder.report import summarize
+
+    print(json.dumps(summarize(read_health(args.data_dir), since=args.since), indent=2))
+    return 0
+
+
+def _command_daily_summary(args: argparse.Namespace) -> int:
+    from touchstone.recorder.report import daily_summary
+
+    print(json.dumps(daily_summary(args.data_dir, args.day, args.products.split(","))))
+    return 0
+
+
 def _command_verify(args: argparse.Namespace) -> int:
+    # Prints integrity counts and no prices, so unlike research code it may read held-out days:
+    # the recording has to stay checkable during the held-out week.
     from touchstone.recorder.storage import read_day
     from touchstone.recorder.verify import verify_day
 
@@ -110,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
         "run": _command_run,
         "healthcheck": _command_healthcheck,
         "compact": _command_compact,
+        "report": _command_report,
+        "daily-summary": _command_daily_summary,
         "verify": _command_verify,
     }
     return handlers[args.command](args)

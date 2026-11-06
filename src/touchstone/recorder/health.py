@@ -53,10 +53,10 @@ class HealthLog:
             self._file = None
 
 
-def read_health(root: Path) -> list[dict[str, Any]]:
-    """Loads every health record under ``root``, oldest day first."""
+def read_health(root: Path, day: str | None = None) -> list[dict[str, Any]]:
+    """Loads health records under ``root``, oldest day first, optionally for one UTC day only."""
     records: list[dict[str, Any]] = []
-    for path in sorted((root / "health").glob("*.jsonl")):
+    for path in sorted((root / "health").glob(f"{day or '*'}.jsonl")):
         with path.open(encoding="utf-8") as lines:
             records += [json.loads(line) for line in lines]
     return records

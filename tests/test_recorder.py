@@ -11,6 +11,7 @@ from fake_feed import START_NS, FakeFeed
 from helpers import Harness, apply_book_rows, assert_sessions_match_truth, eventually
 from touchstone.recorder.protocol import parse_timestamp_ns
 from touchstone.recorder.recorder import Recorder, RecorderAlreadyRunning
+from touchstone.recorder.report import summarize
 from touchstone.recorder.storage import daily_path
 from touchstone.recorder.verify import verify_day
 
@@ -182,6 +183,20 @@ async def test_silent_connection_is_detected_by_the_watchdog(tmp_path):
         await feed.wait_for_streams()
         await eventually(lambda: feed.total_connections == 2)
     assert harness.health("resync")[0]["reason"] == "stale"
+
+
+async def test_outage_is_measured_from_the_last_message_not_from_when_it_was_noticed(tmp_path):
+    clock = Clock(DAY_ONE_START)
+    async with FakeFeed() as feed, Harness(tmp_path, feed, now_ns=clock) as harness:
+        await feed.step(1)
+        await harness.settle()
+        await asyncio.sleep(0.05)  # Let heartbeats sent while settling be processed first.
+        # Six minutes pass with nothing received, as when a machine sleeps.
+        clock.now_ns += 360 * 10**9
+        await feed.abort_connections()
+        await eventually(lambda: len(harness.health("synced")) == 2)
+    outage_ms = harness.health("synced")[1]["outage_ms"]
+    assert 360_000 <= outage_ms < 361_000
 
 
 async def test_book_going_quiet_while_heartbeats_continue_forces_a_resync(tmp_path):
@@ -522,6 +537,7 @@ class Clock:
         return self.now_ns
 
 
+DAY_ONE_START = parse_timestamp_ns("2026-11-04T00:00:01Z")
 DAY_ONE_END = parse_timestamp_ns("2026-11-04T23:59:59Z")
 DAY_TWO_START = parse_timestamp_ns("2026-11-05T00:00:01Z")
 
@@ -553,6 +569,10 @@ async def test_day_rollover_gives_each_day_its_own_self_contained_file(tmp_path)
     assert harness.health("gap") == []
     [compacted] = harness.health("compacted")
     assert compacted["rows"] == first_day.height
+    summary = summarize(harness.health())["products"]["BTC-USD"]
+    assert [r["day"] for r in summary["rollovers"]] == ["2026-11-05"]
+    assert summary["rollovers"][0]["outage_ms"] is not None
+    assert summary["compactions"] == [{"day": "2026-11-04", "rows": first_day.height}]
 
 
 async def test_finished_days_left_by_a_previous_run_are_merged_at_startup(tmp_path):

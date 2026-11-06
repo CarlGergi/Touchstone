@@ -119,7 +119,8 @@ class ProductFeed:
             lived_s = time.monotonic() - started
             self.status.state = "resyncing"
             self.status.resyncs += 1
-            self._outage_started_ns = self.now_ns()
+            # Counted from the last message, because a silent connection is noticed only later.
+            self._outage_started_ns = self.status.last_message_ns or self.now_ns()
             self.health.emit(
                 "resync",
                 product=self.product,
