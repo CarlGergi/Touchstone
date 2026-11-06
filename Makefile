@@ -1,4 +1,4 @@
-.PHONY: install test lint format reproduce record docker-build docker-up docker-down docker-logs
+.PHONY: install test lint format reproduce record docker-build docker-up docker-down docker-logs deploy report teardown teardown-check save-home-profile pull-data
 
 install:
 	uv sync
@@ -9,6 +9,7 @@ test: install
 lint: install
 	uv run ruff check .
 	uv run ruff format --check .
+	uv run shellcheck -x scripts/*.sh scripts/server/*.sh
 
 format: install
 	uv run ruff check --fix .
@@ -31,3 +32,24 @@ docker-down:
 
 docker-logs:
 	docker compose logs -f --tail=100
+
+deploy:
+	scripts/deploy.sh
+
+report:
+	scripts/report.sh
+
+# Stops recording, checks every file is in S3, then deletes the instance and its disk. Run this
+# only after 2026-12-08. It refuses to run before then.
+teardown:
+	scripts/teardown.sh
+
+# Rehearses the teardown without changing anything.
+teardown-check:
+	scripts/teardown.sh --check
+
+save-home-profile:
+	scripts/save-home-profile.sh
+
+pull-data:
+	scripts/pull-data.sh

@@ -16,6 +16,7 @@ dev = [
     "pytest-asyncio>=1",
     "pytest-timeout>=2.3",
     "ruff>=0.8",
+    "shellcheck-py>=0.10",
 ]
 
 [build-system]

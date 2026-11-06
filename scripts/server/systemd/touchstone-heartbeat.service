@@ -1,0 +1,7 @@
+[Unit]
+Description=Report the recorder's last write time to S3
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/touchstone/env
+ExecStart=/usr/bin/python3 /opt/touchstone/heartbeat.py

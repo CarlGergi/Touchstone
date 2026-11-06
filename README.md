@@ -4,7 +4,7 @@ A queue-aware market-making simulator. Touchstone records Coinbase's public orde
 
 | Milestone | Status |
 | --- | --- |
-| 1. Recorder | Done |
+| 1. Recorder | Code done; moving to an always-on server |
 | 2. C++ order book, replay engine, ring buffer | Not started |
 | 3. Queue estimator, latency model, fill simulator | Not started |
 | 4. Signal study | Not started |
@@ -43,8 +43,19 @@ Held-out files are not even opened without the flag, and rows are also filtered 
 ## Limitations
 
 - **The book is conflated at 50 ms.** Coinbase's public level-2 feed sends a batch about every 50 ms, with one row per changed level holding its final size and a single event time. Changes inside a batch cannot be seen, and an order added and filled within one batch never appears. So the queue estimator sees net changes at each level: trades are visible with microsecond timestamps, but cancellations can only be inferred as the drop in size not explained by trades, and additions in the same batch can hide them. For the same reason, the latency sweep cannot resolve book changes finer than about 50 ms, so differences between very small delays say little. Measuring the resulting error needs Coinbase's authenticated full channel.
-- **Latency samples are not order entry.** Round trips are WebSocket pings to the market-data endpoint from wherever the recorder runs. They measure the network, not the path through order entry and the matching engine, and they depend on the recorder's location.
+- **Latency samples are not order entry.** Round trips are WebSocket pings to the market-data endpoint from wherever the recorder ran. They measure the network, not the path through order entry and the matching engine. See [Latency profiles](#latency-profiles).
 - **Recordings have outages.** Connections drop from time to time, and the book cannot be rebuilt across a break, so each one starts a new session. The trade snapshot on reconnect usually fills short breaks, and `verify` counts any trades still missing.
+
+## Latency profiles
+
+Measured round trips depend on where they were measured, so they are kept as two labelled profiles, and the latency sweep uses both:
+
+| Profile | Source |
+| --- | --- |
+| `fast_trader` | The always-on AWS server, labelled `fast_trader (us-east-2)` |
+| `home` | A Mac on a home connection, saved when the recorder moved off it, about 37 ms at the median |
+
+`touchstone.latency` loads them, and `uv run python -m touchstone.latency summary` shows them.
 
 ## Recorder
 
@@ -122,9 +133,39 @@ uv run python -m touchstone.recorder run --data-dir data
 uv run python -m touchstone.recorder verify BTC-USD 2026-11-04 --data-dir data
 uv run python -m touchstone.recorder healthcheck --data-dir data
 uv run python -m touchstone.recorder compact --data-dir data
+uv run python -m touchstone.recorder report --data-dir data
 ```
 
-`verify` checks a recorded day for the invariants replay depends on and exits non-zero if any fail.
+`verify` checks a recorded day for the invariants replay depends on and exits non-zero if any fail. It loads the whole day into memory, about 4 GB for a full day of BTC-USD, so run it on a copy rather than on a small server. `report` summarizes the health log: resyncs by reason, gaps, midnight rollovers, merges, and round trips.
+
+### Crash restarts
+
+`docker kill` does not test a crash. Docker treats it as a deliberate stop, so a `restart: unless-stopped` container stays down afterwards. A real crash, tested by sending `SIGKILL` to the process from outside the container, restarts immediately, and everything flushed before it stays readable. On the server, systemd supervises the container instead, so even `docker kill` restarts it.
+
+### Running on AWS
+
+`scripts/deploy.sh` needs Docker and the AWS CLI with working credentials, and is safe to run again. It creates:
+
+- **Where:** `us-east-2`, the only region where the project account allows regional services.
+- **An instance:** `t4g.small`, arm64 Amazon Linux 2023, with a 50 GB encrypted gp3 disk. It has no inbound ports and no SSH key, and is managed through AWS Systems Manager. Termination protection is on, and the disk outlives the instance, so recordings are hard to lose by accident.
+- **A private S3 bucket:** public access is blocked and versioning is on. At 00:30 UTC each day the server copies merged daily files and health logs there. Its role can add objects but cannot delete them.
+- **A phone alert through ntfy:** if a product has no data written for 10 minutes, a push goes to a private topic, repeated hourly until it recovers. The server only reports its last write time to S3, and the check runs in AWS Lambda, so a dead server raises the alert too.
+- **Cost guards:** a yearly $100 budget named `touchstone`, counted before credits, emails alerts at $25, $50 and $80 of actual spend and at $80 forecast. At $90 a budget action stops the instance automatically. Stopping, not terminating, keeps the disk and recordings. Set `BUDGET_EMAIL` in `deploy.env`.
+- **A daily push at 01:00 UTC:** yesterday's event counts, gaps, reconnects, and AWS spend so far. It crosses the server's daily job, S3, Lambda and ntfy, so if it does not arrive, one of them is broken, including the alert path itself.
+
+```bash
+make deploy      # create or update everything
+make report      # server status, health summary, and verify on finished days from S3
+make pull-data   # copy finished recordings from S3 to data-server/ on this machine
+```
+
+To stop recording temporarily, run `sudo systemctl stop touchstone-recorder` on the server, because `docker stop` alone is restarted. `aws ssm start-session` gives a shell.
+
+### Ending the recording
+
+**Run `make teardown` after 2026-12-08, and not before.** The recording has to cover the held-out week of 2026-12-01 to 2026-12-07, and charges continue until this is run. It refuses to run before 2026-12-09 00:00 UTC, and asks for confirmation.
+
+It stops the recorder, merges and syncs the last files, and confirms that every file on the server is in S3 at the same size. Only then does it delete the instance, its disk and the alert function. If anything does not match, nothing is deleted. The S3 bucket is kept, along with the IAM roles and security group, which cost nothing. `make teardown-check` rehearses the checks and permissions without changing anything.
 
 ### Testing
 

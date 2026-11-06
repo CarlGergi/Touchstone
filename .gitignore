@@ -1,5 +1,9 @@
 # Recorded market data
 /data/
+/data-server/
+
+# Deployment settings, which include the private alert topic
+/deploy.env
 
 # Python
 .venv/

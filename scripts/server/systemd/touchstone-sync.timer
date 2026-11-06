@@ -1,0 +1,9 @@
+[Unit]
+Description=Copy finished recordings to S3 after each day is merged
+
+[Timer]
+OnCalendar=*-*-* 00:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

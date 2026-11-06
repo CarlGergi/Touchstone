@@ -1,0 +1,9 @@
+[Unit]
+Description=Copy finished recordings to S3 and summarize yesterday
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/touchstone/env
+ExecStart=/opt/touchstone/sync.sh
