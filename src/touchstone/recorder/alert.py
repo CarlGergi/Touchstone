@@ -40,6 +40,11 @@ def _minutes(seconds: float) -> int:
     return int(seconds // 60)
 
 
+def _minutes_text(seconds: float) -> str:
+    minutes = _minutes(seconds)
+    return "1 minute" if minutes == 1 else f"{minutes} minutes"
+
+
 def decide(
     heartbeat: dict[str, Any] | None,
     state: dict[str, Any],
@@ -55,7 +60,7 @@ def decide(
         last = last_writes.get(product) or 0
         alert = state.get(product)
         if now - last >= STALL_AFTER_S:
-            silent = "no record of any writes" if not last else f"{_minutes(now - last)} minutes"
+            silent = "no record of any writes" if not last else _minutes_text(now - last)
             if alert is None:
                 alert = {"first": now, "last": now}
                 notices.append(
@@ -68,11 +73,11 @@ def decide(
                 )
             new_state[product] = alert
         elif alert is not None:
-            down = _minutes(now - alert["first"])
+            down = _minutes_text(now - alert["first"])
             notices.append(
                 Notice(
                     "Recorder recovered",
-                    f"{product}: writing again after about {down} minutes since the alert.",
+                    f"{product}: writing again, about {down} after the alert.",
                     "default",
                     "white_check_mark",
                 )

@@ -437,3 +437,11 @@ def test_alert_runs_from_a_single_file_with_only_the_standard_library():
         [sys.executable, "-I", "-S", "-c", code], capture_output=True, text=True
     )
     assert result.stdout.strip() == "600", result.stderr
+
+
+def test_minutes_read_naturally():
+    assert alert._minutes_text(60) == "1 minute"
+    assert alert._minutes_text(600) == "10 minutes"
+    _, state = decide(beat(btc=NOW - 600), {}, PRODUCTS, NOW)
+    notices, _ = decide(beat(btc=NOW + 60, eth=NOW + 60), state, PRODUCTS, NOW + 60)
+    assert notices[0].message == "BTC-USD: writing again, about 1 minute after the alert."
