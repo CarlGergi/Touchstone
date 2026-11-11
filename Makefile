@@ -1,4 +1,4 @@
-.PHONY: install test lint format reproduce record docker-build docker-up docker-down docker-logs deploy report teardown teardown-check save-home-profile pull-data
+.PHONY: install test lint format reproduce experiments record docker-build docker-up docker-down docker-logs deploy report teardown teardown-check save-home-profile pull-data
 
 install:
 	uv sync
@@ -15,8 +15,12 @@ format: install
 	uv run ruff check --fix .
 	uv run ruff format .
 
-# Rebuilds every result in the repository from scratch. Later milestones add their experiments here.
-reproduce: test
+# Rebuilds every result from scratch: the tests, then every experiment on the recorded days in
+# data-server/ (run make pull-data first), into results/results.json. Held-out data is never read.
+reproduce: test experiments
+
+experiments: install
+	uv run python -m touchstone.experiments --data-dir data-server
 
 record: install
 	uv run python -m touchstone.recorder run --data-dir data
