@@ -17,6 +17,7 @@
 
 #include "touchstone/order_book.hpp"
 #include "touchstone/ring_buffer.hpp"
+#include "touchstone/simulator.hpp"
 
 namespace py = pybind11;
 using touchstone::OrderBook;
@@ -240,6 +241,48 @@ py::dict pipeline(const Array<std::uint8_t>& event, const Array<std::uint8_t>& s
   return result;
 }
 
+// Runs the fill simulator over one stream. See simulator.hpp for the model.
+py::dict simulate(const Array<std::uint8_t>& event, const Array<std::uint8_t>& side,
+                  const Array<std::int64_t>& price, const Array<std::int64_t>& size,
+                  const Array<std::int64_t>& seq, const Array<std::int64_t>& session,
+                  const Array<std::int64_t>& ts, const Array<std::int64_t>& seen,
+                  const Array<double>& signal, const Array<std::int64_t>& trade_ts,
+                  const Array<std::uint8_t>& trade_side, const Array<std::int64_t>& trade_price,
+                  const Array<std::int64_t>& trade_size, const Array<std::int64_t>& delays,
+                  const touchstone::SimConfig& config) {
+  const Stream s = make_stream(event, side, price, size, seq, session, ts);
+  if (seen.size() != signal.size()) throw std::invalid_argument("seen and signal differ in length");
+  const auto n_trades = static_cast<std::size_t>(trade_ts.size());
+  if (static_cast<std::size_t>(trade_side.size()) != n_trades || static_cast<std::size_t>(trade_price.size()) != n_trades ||
+      static_cast<std::size_t>(trade_size.size()) != n_trades) {
+    throw std::invalid_argument("trade columns differ in length");
+  }
+  touchstone::SimResult result;
+  {
+    py::gil_scoped_release release;
+    touchstone::Simulator simulator;
+    result = simulator.run(s.event, s.side, s.price, s.size, s.seq, s.session, s.ts, s.n, seen.data(),
+                           signal.data(), static_cast<std::size_t>(seen.size()), trade_ts.data(),
+                           trade_side.data(), trade_price.data(), trade_size.data(), n_trades,
+                           delays.data(), static_cast<std::size_t>(delays.size()), config);
+  }
+  std::vector<std::int64_t> fill_ts, fill_price, fill_qty;
+  for (const auto& f : result.fills) {
+    fill_ts.push_back(f.ts);
+    fill_price.push_back(f.price);
+    fill_qty.push_back(f.qty);
+  }
+  py::dict out;
+  out["fill_ts"] = py::array(py::cast(fill_ts));
+  out["fill_price"] = py::array(py::cast(fill_price));
+  out["fill_qty"] = py::array(py::cast(fill_qty));
+  out["orders_sent"] = result.orders_sent;
+  out["cancels_sent"] = result.cancels_sent;
+  out["cancelled_by_outage"] = result.cancelled_by_outage;
+  out["final_inventory"] = result.final_inventory;
+  return out;
+}
+
 }  // namespace
 
 PYBIND11_MODULE(touchstone_engine, m) {
@@ -256,6 +299,22 @@ PYBIND11_MODULE(touchstone_engine, m) {
       .def("depth", &OrderBook::depth, py::arg("side"))
       .def("levels", &OrderBook::levels, py::arg("side"), py::arg("limit") = 0);
 
+  py::class_<touchstone::SimConfig>(m, "SimConfig")
+      .def(py::init<>())
+      .def_readwrite("naive", &touchstone::SimConfig::naive)
+      .def_readwrite("cancel_share", &touchstone::SimConfig::cancel_share)
+      .def_readwrite("order_size", &touchstone::SimConfig::order_size)
+      .def_readwrite("max_inventory_lots", &touchstone::SimConfig::max_inventory_lots)
+      .def_readwrite("tick", &touchstone::SimConfig::tick)
+      .def_readwrite("strategy", &touchstone::SimConfig::strategy)
+      .def_readwrite("gamma", &touchstone::SimConfig::gamma)
+      .def_readwrite("kappa", &touchstone::SimConfig::kappa)
+      .def_readwrite("sigma_ticks", &touchstone::SimConfig::sigma_ticks)
+      .def_readwrite("horizon_s", &touchstone::SimConfig::horizon_s)
+      .def_readwrite("skew_ticks_per_unit", &touchstone::SimConfig::skew_ticks_per_unit)
+      .def_readwrite("seed", &touchstone::SimConfig::seed);
+
+  m.def("simulate", &simulate, "Our orders against a recorded book, with queue position and latency");
   m.def("replay_top", &replay_top, "Top of the book after every message");
   m.def("replay_rate", &replay_rate, "Rows replayed per second");
   m.def("replay_checkpoints", &replay_checkpoints, "Book state just before each checkpoint time");
