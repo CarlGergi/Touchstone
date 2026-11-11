@@ -4,11 +4,11 @@ A queue-aware market-making simulator. Touchstone records Coinbase's public orde
 
 | Milestone | Status |
 | --- | --- |
-| 1. Recorder | Code done; moving to an always-on server |
-| 2. C++ order book, replay engine, ring buffer | Not started |
-| 3. Queue estimator, latency model, fill simulator | Not started |
-| 4. Signal study | Not started |
-| 5. Strategy ladder, P&L attribution, held-out evaluation | Not started |
+| 1. Recorder | Done; recording on AWS until 2026-12-08 |
+| 2. C++ order book, replay engine, ring buffer | Done |
+| 3. Queue estimator, latency model, fill simulator | Done |
+| 4. Signal study | Done |
+| 5. Strategy ladder, P&L attribution, latency sweep | Done, except the held-out evaluation, which needs the week of 2026-12-01 |
 
 ## Quick start
 
@@ -22,6 +22,21 @@ make docker-up   # record to ./data in a container that restarts on failure
 make docker-logs
 make docker-down
 ```
+
+## Results
+
+`make reproduce` runs the tests and then every experiment on the recorded days in `data-server/` (fetch them with `make pull-data`), writing everything to `results/results.json`. Its `headline` section holds the numbers below, each as a value with a 95% confidence interval. The other sections hold every variant and parameter tried, and the per-day figures behind each number.
+
+| Number | What it measures |
+| --- | --- |
+| `replay_events_per_s` | Recorded rows replayed per second by the C++ engine, reading the top of the book after every message. A plain Python version, kept sorted with `SortedDict`, is in the `engine` section for comparison. |
+| `ring_buffer_latency_ns` | p50, p99 and p99.9 from a row's push by the producer thread to its application to the book by the consumer, through the lock-free ring buffer, at a steady 200,000 rows a second |
+| `total_events_recorded` | Book updates and trades on the days used, an exact count |
+| `touch_fill_overstatement_pct` | How much a touch-fill backtest overstates P&L and fill rate, measured as filled volume, against the queue-and-latency model with `fast_trader` round trips |
+| `edge_disappears_latency_ms` | For each strategy, the smallest latency in the sweep at which mean P&L stops being positive. Zero means no edge even with no latency. |
+| `best_signal_ic_by_horizon` | Out-of-sample information coefficient of the best signal at 100 ms, 1 s and 10 s, chosen by walk-forward on earlier days only |
+
+The experiments use whole days recorded on the server before 2026-11-15. Speed and latency depend on the machine and on what else it is running: the results record the load average, and they should be rerun on an otherwise idle machine.
 
 ## Development data and the held-out week
 
@@ -44,6 +59,8 @@ Held-out files are not even opened without the flag, and rows are also filtered 
 
 - **The book is conflated at 50 ms.** Coinbase's public level-2 feed sends a batch about every 50 ms, with one row per changed level holding its final size and a single event time. Changes inside a batch cannot be seen, and an order added and filled within one batch never appears. So the queue estimator sees net changes at each level: trades are visible with microsecond timestamps, but cancellations can only be inferred as the drop in size not explained by trades, and additions in the same batch can hide them. For the same reason, the latency sweep cannot resolve book changes finer than about 50 ms, so differences between very small delays say little. Measuring the resulting error needs Coinbase's authenticated full channel.
 - **Latency samples are not order entry.** Round trips are WebSocket pings to the market-data endpoint from wherever the recorder ran. They measure the network, not the path through order entry and the matching engine. See [Latency profiles](#latency-profiles).
+- **The book check allows for the straddling batch.** An audit snapshot taken between two book messages may already contain part of the later one. The replayed book must match it exactly except at levels that message touches, and any other difference fails the check.
+- **The fill model is an estimate.** Our orders are not in the recorded book, so queue position is inferred: trades at our price use up the queue ahead first, and a configurable share of unexplained size decreases counts as cancellations ahead of us. Results are reported with that share at 0, 0.5 and 1.
 - **Recordings have outages.** Connections drop from time to time, and the book cannot be rebuilt across a break, so each one starts a new session. The trade snapshot on reconnect usually fills short breaks, and `verify` counts any trades still missing.
 
 ## Latency profiles

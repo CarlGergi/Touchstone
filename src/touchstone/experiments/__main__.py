@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from touchstone.experiments import engine_bench, fill_model, results
+from touchstone.experiments import engine_bench, fill_model, results, signal_study, strategies
 
 EXPERIMENTS = {
     "engine": engine_bench.run,
     "fill_model": fill_model.run,
+    "signals": signal_study.run,
+    "strategies": strategies.run,
 }
 
 
