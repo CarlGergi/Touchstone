@@ -8,12 +8,11 @@ from pathlib import Path
 
 import polars as pl
 
-from touchstone.data import load
+from touchstone.data import DEVELOPMENT_END, load
 from touchstone.recorder.storage import recorded_days
 
-# Experiments for the first results use development data received before this date only. The
-# held-out week starting 2026-12-01 is out of reach anyway: the loader refuses it.
-RESEARCH_END = "2026-11-15"
+# Development data only. The held-out windows are out of reach anyway: the loader refuses them.
+RESEARCH_END = DEVELOPMENT_END.date().isoformat()
 
 
 def research_days(root: Path, product: str, *, first: str = "2026-11-06") -> list[str]:

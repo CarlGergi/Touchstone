@@ -8,7 +8,7 @@ A queue-aware market-making simulator. Touchstone records Coinbase's public orde
 | 2. C++ order book, replay engine, ring buffer | Done |
 | 3. Queue estimator, latency model, fill simulator | Done |
 | 4. Signal study | Done |
-| 5. Strategy ladder, P&L attribution, latency sweep | Done, except the held-out evaluation, which needs the week of 2026-12-01 |
+| 5. Strategy ladder, P&L attribution, latency sweep | Done. Final evaluation on 2026-11-19; confirmation after 2026-12-08 |
 
 ## Quick start
 
@@ -39,22 +39,26 @@ make docker-down
 
 The experiments use whole days recorded on the server before 2026-11-15. Speed and latency depend on the machine and on what else it is running: the results record the load average, and they should be rerun on an otherwise idle machine.
 
-## Development data and the held-out week
+## Development data and the held-out windows
 
-| Period | Dates (UTC) | Use |
-| --- | --- | --- |
-| Development | Everything before 2026-12-01 00:00 | All research. First results use walk-forward evaluation on this data only |
-| Held out | 2026-12-01 to 2026-12-07 | The final evaluation in milestone 5 |
+| Window | Dates (UTC) | Products | Use |
+| --- | --- | --- | --- |
+| Development | Everything before 2026-11-15 00:00 | All | All research and every choice of signal and parameters |
+| Final evaluation | 2026-11-15 00:00 to 2026-11-19 00:00 | BTC-USD, ETH-USD | Run once, on 2026-11-19, with everything fitted on development data |
+| Confirmation | 2026-12-01 00:00 to 2026-12-08 00:00 | All four | Run once after the week ends, as a second, later check |
 
-The cutoff was fixed on 2026-11-04, before any results existed, and it is enforced in code. `touchstone.data.load` is how research code reads recordings, and it refuses any timestamp from 2026-12-01 onward unless it is explicitly given `final=True`, which research commands expose as `--final`:
+The windows are enforced in code. `touchstone.data.load` is how research code reads recordings. It refuses any range that touches a window not opened, rather than quietly cutting it short. `final=True` (`--final`) opens the final window, and `confirm=True` (`--confirm`) opens the confirmation week and, since the final window is spent by then, that too. The days between the windows are never read.
 
 ```bash
-uv run python -m touchstone.data summary BTC-USD                    # development data only
-uv run python -m touchstone.data summary BTC-USD --end 2026-12-08   # refused
-uv run python -m touchstone.data summary BTC-USD --end 2026-12-08 --final
+uv run python -m touchstone.data summary BTC-USD                      # development data only
+uv run python -m touchstone.data summary BTC-USD --end 2026-11-19     # refused
+make holdout-final      # on 2026-11-19, once
+make holdout-confirm    # after 2026-12-08, once
 ```
 
-Held-out files are not even opened without the flag, and rows are also filtered on all three clocks, so clock skew cannot let a later row through. A test fails if any module outside the recorder reads recordings around the loader. The recorder's own `verify` can read held-out days, because it reports integrity counts and no prices, and the recording has to stay checkable during that week.
+Files from closed windows are not even opened, and rows are filtered on all three clocks, so clock skew cannot let a later row through. A test fails if any module outside the recorder reads recordings around the loader. Each held-out evaluation writes its section of the results file once, and refuses to run again, so a window cannot be looked at repeatedly until something looks good. The recorder's own `verify` can read any day, because it reports integrity counts and no prices.
+
+ZEC-USD and NEAR-USD were added to the recorder on 2026-11-11, to show how the edge depends on spread width. They have only a few development days, are not part of the final evaluation, and join the confirmation.
 
 ## Limitations
 
@@ -181,7 +185,7 @@ To stop recording temporarily, run `sudo systemctl stop touchstone-recorder` on 
 
 ### Ending the recording
 
-**Run `make teardown` after 2026-12-08, and not before.** The recording has to cover the held-out week of 2026-12-01 to 2026-12-07, and charges continue until this is run. It refuses to run before 2026-12-09 00:00 UTC, and asks for confirmation.
+**Run `make teardown` after 2026-12-08, and not before.** The recording has to cover the confirmation week of 2026-12-01 to 2026-12-07, and charges continue until this is run. It refuses to run before 2026-12-09 00:00 UTC, and asks for confirmation.
 
 It stops the recorder, merges and syncs the last files, and confirms that every file on the server is in S3 at the same size. Only then does it delete the instance, its disk and the alert function. If anything does not match, nothing is deleted. The S3 bucket is kept, along with the IAM roles and security group, which cost nothing. `make teardown-check` rehearses the checks and permissions without changing anything.
 
