@@ -15,12 +15,11 @@ import polars as pl
 import touchstone_engine as engine
 
 from touchstone.latency import round_trips
+from touchstone.products import ORDER_SIZE_E8, TICK_E8
 from touchstone.replay import stream_arrays
 
 E8 = 1e8
 TRADES = ("trade", "trade_snapshot")
-# Order sizes worth about $75 and $25, small next to the size usually resting at the best price.
-ORDER_SIZE_E8 = {"BTC-USD": 100_000, "ETH-USD": 1_000_000}
 
 
 @dataclass(frozen=True)
@@ -132,6 +131,7 @@ def simulate(
     config.naive = naive_fills
     config.cancel_share = cancel_share
     config.order_size = ORDER_SIZE_E8[market.product]
+    config.tick = TICK_E8[market.product]
     config.strategy = strategy
     config.seed = seed
     for key, value in parameters.items():

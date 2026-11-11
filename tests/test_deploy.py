@@ -670,6 +670,12 @@ def test_recorder_is_supervised_so_even_docker_kill_restarts_it():
     assert "--restart" not in service
 
 
+def test_recorder_records_the_configured_products_not_a_built_in_default():
+    service = unit("touchstone-recorder.service")
+    assert "EnvironmentFile=/etc/touchstone/env" in service
+    assert "--products ${TOUCHSTONE_PRODUCTS}" in service
+
+
 def test_scheduled_jobs_run_on_the_agreed_cadence():
     assert "OnCalendar=*-*-* 00:30:00 UTC" in unit("touchstone-sync.timer")
     assert "Persistent=true" in unit("touchstone-sync.timer")

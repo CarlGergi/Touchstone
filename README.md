@@ -33,6 +33,7 @@ make docker-down
 | `ring_buffer_latency_ns` | p50, p99 and p99.9 from a row's push by the producer thread to its application to the book by the consumer, through the lock-free ring buffer, at a steady 200,000 rows a second |
 | `total_events_recorded` | Book updates and trades on the days used, an exact count |
 | `touch_fill_overstatement_pct` | How much a touch-fill backtest overstates P&L and fill rate, measured as filled volume, against the queue-and-latency model with `fast_trader` round trips |
+| Fees | P&L is reported before fees and at a maker fee of 50 bps, and of 40 bps, of traded notional. 50 bps is the US entry-tier maker fee reported after a change on 2026-09-16; your own order preview shows the rate that applies. |
 | `edge_disappears_latency_ms` | For each strategy, the smallest latency in the sweep at which mean P&L stops being positive. Zero means no edge even with no latency. |
 | `best_signal_ic_by_horizon` | Out-of-sample information coefficient of the best signal at 100 ms, 1 s and 10 s, chosen by walk-forward on earlier days only |
 

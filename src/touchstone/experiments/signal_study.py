@@ -16,14 +16,27 @@ from typing import Any
 
 import numpy as np
 
+from touchstone import products
 from touchstone.experiments.days import day_frames, research_days
 from touchstone.experiments.stats import mean_ci
 from touchstone.signals import HORIZONS_S, features, forward_change, rank_ic, sample_times, value_at
 from touchstone.simulation import prepare, top_of_book
 
-PRODUCTS = ("BTC-USD", "ETH-USD")
+PRODUCTS = products.ALL
 SAMPLE_STEP_S = 0.1
-TICK_E8 = 1_000_000
+
+
+def day_ics(market) -> dict[tuple[float, str], float]:
+    """The IC of every variant at every horizon on one prepared day."""
+    book = top_of_book(market)
+    values = features(book)
+    times = sample_times(book, SAMPLE_STEP_S, max(HORIZONS_S))
+    out = {}
+    for horizon in HORIZONS_S:
+        target = forward_change(book, times, horizon, products.TICK_E8[market.product])
+        for name, series in values.items():
+            out[(horizon, name)] = rank_ic(value_at(book, series, times), target)
+    return out
 
 
 def daily_ics(root: Path) -> list[dict[str, Any]]:
@@ -31,24 +44,19 @@ def daily_ics(root: Path) -> list[dict[str, Any]]:
     rows = []
     for product in PRODUCTS:
         for day, frame in day_frames(root, product, research_days(root, product)):
-            book = top_of_book(prepare(frame, product))
+            market = prepare(frame, product)
             del frame
             gc.collect()
-            values = features(book)
-            for horizon in HORIZONS_S:
-                times = sample_times(book, SAMPLE_STEP_S, max(HORIZONS_S))
-                target = forward_change(book, times, horizon, TICK_E8)
-                for name, series in values.items():
-                    ic = rank_ic(value_at(book, series, times), target)
-                    rows.append(
-                        {
-                            "product": product,
-                            "day": day,
-                            "horizon_s": horizon,
-                            "variant": name,
-                            "ic": ic,
-                        }
-                    )
+            for (horizon, name), ic in day_ics(market).items():
+                rows.append(
+                    {
+                        "product": product,
+                        "day": day,
+                        "horizon_s": horizon,
+                        "variant": name,
+                        "ic": ic,
+                    }
+                )
     return rows
 
 
