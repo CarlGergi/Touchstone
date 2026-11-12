@@ -1,18 +1,96 @@
+<div align="center">
+
 # Touchstone
 
-A queue-aware market-making simulator. Touchstone records Coinbase's public order book, replays it event by event, and tests a market maker against it with realistic fills. The headline result is how much a naive backtest, which assumes a quote fills as soon as the price touches it, overstates profit compared with one that models queue position and latency.
+**A queue-aware market-making backtester built on a live, self-recorded Coinbase order book.**
 
-| Milestone | Status |
+*How much does a naive backtest lie? Touchstone records the book, replays it at full fidelity,<br/>
+and measures the gap between "the price touched my quote" and "my order actually filled."*
+
+<br/>
+
+![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![pybind11](https://img.shields.io/badge/pybind11-bindings-4B8BBE?style=for-the-badge)
+![Polars](https://img.shields.io/badge/Polars-DataFrames-CD792C?style=for-the-badge&logo=polars&logoColor=white)
+![Apache Parquet](https://img.shields.io/badge/Apache%20Parquet-storage-50ABF1?style=for-the-badge&logo=apacheparquet&logoColor=white)
+
+![AWS EC2](https://img.shields.io/badge/AWS-EC2-FF9900?style=for-the-badge&labelColor=232F3E)
+![AWS Lambda](https://img.shields.io/badge/AWS-Lambda-FF9900?style=for-the-badge&labelColor=232F3E)
+![AWS S3](https://img.shields.io/badge/AWS-S3-FF9900?style=for-the-badge&labelColor=232F3E)
+![Docker](https://img.shields.io/badge/Docker-container-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![systemd](https://img.shields.io/badge/systemd-supervised-30D475?style=for-the-badge&logo=linux&logoColor=black)
+![CMake](https://img.shields.io/badge/CMake-build-064F8C?style=for-the-badge&logo=cmake&logoColor=white)
+![uv](https://img.shields.io/badge/uv-workspace-DE5FE9?style=for-the-badge&logo=uv&logoColor=white)
+
+![Tests](https://img.shields.io/badge/tests-367%20passing-2EA043?style=flat-square&logo=pytest&logoColor=white)
+![Reproducible](https://img.shields.io/badge/reproducible-make%20reproduce-2EA043?style=flat-square)
+![Hold-out](https://img.shields.io/badge/hold--out-enforced%20in%20code-8250DF?style=flat-square)
+![Recording](https://img.shields.io/badge/recording-24%2F7%20on%20AWS-FF9900?style=flat-square)
+
+[Highlights](#highlights) · [Architecture](#architecture) · [Results](#results) · [Hold-out](#development-data-and-the-held-out-windows) · [Limitations](#limitations) · [Recorder](#recorder)
+
+</div>
+
+---
+
+## Highlights
+
+- **Live data capture, around the clock.** A recorder on AWS streams Coinbase's level-2 book and trades for BTC, ETH, ZEC and NEAR, detects every sequence gap, resyncs from a fresh snapshot, and writes exact integer-priced Parquet.
+- **A book you can trust.** Every 15 minutes an independent snapshot audits the replayed book. **754 of 754 audits matched** on the first pass.
+- **A C++20 engine.** A cache-friendly order book that stores levels near the touch in a flat array indexed by price tick, finds the best price through a three-level bitmap, and keeps far-away levels in an ordered map. Around it sit a replay engine and a lock-free single-producer, single-consumer ring buffer, exposed to Python through pybind11. Replay is checked to give an identical top of book to a `std::map` book after every message, and runs about **4–5× faster** than it on recorded data.
+- **Realistic fills.** A simulator that models queue position, cancellations ahead of the order, network latency, cancel-versus-fill races and post-only rejection.
+- **Research without leakage.** Purged walk-forward signal selection, and held-out windows that the data loader itself refuses to open early. Each held-out window can be evaluated only once.
+- **Production operations on a small budget.** Per-minute health checks in Lambda, phone alerts within 10 minutes of a stall, a daily report, and a budget action that stops the server automatically. Expected total cloud cost is about $20.
+
+### First-pass findings
+
+From development data recorded on 2026-11-06 to 2026-11-09. Final development numbers come from the full run on 2026-11-15, and the held-out evaluation follows on 2026-11-19.
+
+| Finding | First pass |
 | --- | --- |
-| 1. Recorder | Done; recording on AWS until 2026-12-08 |
-| 2. C++ order book, replay engine, ring buffer | Done |
-| 3. Queue estimator, latency model, fill simulator | Done |
-| 4. Signal study | Done |
-| 5. Strategy ladder, P&L attribution, latency sweep | Done. Final evaluation on 2026-11-19; confirmation after 2026-12-08 |
+| Filled volume claimed by a touch-fill backtest, against the queue-and-latency model | **≈ 4.2×** (95% CI 3.1× to 5.9×) |
+| Book audits matched exactly | **754 / 754** |
+| Events recorded (BTC-USD and ETH-USD, four days) | **142.6 M** |
+| Best short-horizon signal | **Queue imbalance**, rank IC 0.11 at 100 ms, 0.18 at 1 s, 0.13 at 10 s |
+| Latency at which the market-making edge disappears | **0 ms**: no strategy tested was profitable after realistic fills, even with zero latency |
+| Replay throughput and ring-buffer latency | Pending the clean benchmark on an idle machine |
+
+## Architecture
+
+```mermaid
+flowchart LR
+    CB["Coinbase WebSocket<br/>level 2 · trades · heartbeats"] --> REC["Recorder<br/>gap detection · resync · audits"]
+    REC --> PQ[("Daily Parquet<br/>int64 prices")]
+    PQ --> S3[("S3")]
+    PQ --> LOAD["Hold-out loader<br/>refuses closed windows"]
+    LOAD --> ENG["C++20 engine<br/>order book · replay · SPSC ring"]
+    ENG --> SIM["Fill simulator<br/>queue position · latency"]
+    SIM --> EXP["Experiments<br/>signals · strategies · latency sweep"]
+    EXP --> RES["results.json<br/>95% confidence intervals"]
+    REC -. "health" .-> LAM["Lambda monitor"] -. "push" .-> PHONE["Phone alert"]
+```
+
+| Layer | Where | Built with |
+| --- | --- | --- |
+| Recorder | `src/touchstone/recorder/` | Python asyncio, `websockets`, Polars, Parquet |
+| Engine | `engine/include/touchstone/` | C++20, pybind11, scikit-build-core, CMake |
+| Simulation and research | `src/touchstone/simulation.py`, `signals.py`, `experiments/` | NumPy, Polars, bootstrap confidence intervals |
+| Operations | `scripts/` | EC2 (Graviton, arm64), S3, Lambda, EventBridge, Systems Manager, AWS Budgets, systemd, Docker, ntfy |
+
+## Milestones
+
+| | Milestone | Status |
+| --- | --- | --- |
+| 1 | Recorder | ✅ Done; recording on AWS until 2026-12-08 |
+| 2 | C++ order book, replay engine, ring buffer | ✅ Done |
+| 3 | Queue estimator, latency model, fill simulator | ✅ Done |
+| 4 | Signal study | ✅ Done |
+| 5 | Strategy ladder, P&L attribution, latency sweep | ✅ Done. Final evaluation on 2026-11-19; confirmation after 2026-12-08 |
 
 ## Quick start
 
-Requires [uv](https://docs.astral.sh/uv/), and Docker to run the recorder as a service.
+Requires [uv](https://docs.astral.sh/uv/), a C++20 compiler, and Docker to run the recorder as a service.
 
 ```bash
 make test        # run the test suite
@@ -29,7 +107,7 @@ make docker-down
 
 | Number | What it measures |
 | --- | --- |
-| `replay_events_per_s` | Recorded rows replayed per second by the C++ engine, reading the top of the book after every message. A plain Python version, kept sorted with `SortedDict`, is in the `engine` section for comparison. |
+| `replay_events_per_s` | Recorded rows replayed per second by the C++ engine on the flat, tick-indexed book, reading the top of the book after every message. The same replay on a `std::map` book, run in alternation, and a plain Python version kept sorted with `SortedDict` are in the `engine` section for comparison. |
 | `ring_buffer_latency_ns` | p50, p99 and p99.9 from a row's push by the producer thread to its application to the book by the consumer, through the lock-free ring buffer, at a steady 200,000 rows a second |
 | `total_events_recorded` | Book updates and trades on the days used, an exact count |
 | `touch_fill_overstatement_pct` | How much a touch-fill backtest overstates P&L and fill rate, measured as filled volume, against the queue-and-latency model with `fast_trader` round trips |
