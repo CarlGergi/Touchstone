@@ -15,15 +15,20 @@
 #include <pthread/qos.h>
 #endif
 
+#include "touchstone/flat_book.hpp"
 #include "touchstone/order_book.hpp"
 #include "touchstone/ring_buffer.hpp"
 #include "touchstone/simulator.hpp"
 
 namespace py = pybind11;
+using touchstone::FlatBook;
 using touchstone::OrderBook;
 using touchstone::Side;
 
 namespace {
+
+// Ticks each side of a flat book keeps in its array unless told otherwise: about 1 million.
+constexpr std::size_t kWindow = std::size_t{1} << 20;
 
 // Codes of the recorded event column, in the order of its enum.
 constexpr std::uint8_t kSnapshot = 0;
@@ -56,8 +61,21 @@ Stream make_stream(const Array<std::uint8_t>& event, const Array<std::uint8_t>& 
   return {event.data(), side.data(), price.data(), size.data(), seq.data(), session.data(), ts.data(), n};
 }
 
+// Runs f with the book a replay asked for: the flat book on a tick grid when tick is positive,
+// otherwise the std::map book.
+template <typename F>
+decltype(auto) with_book(std::int64_t tick, std::size_t window, F&& f) {
+  if (tick > 0) {
+    FlatBook book(tick, window);
+    return f(book);
+  }
+  OrderBook book;
+  return f(book);
+}
+
 // Applies one message starting at row i and returns the row after it.
-std::size_t apply_message(OrderBook& book, const Stream& s, std::size_t i) {
+template <typename Book>
+std::size_t apply_message(Book& book, const Stream& s, std::size_t i) {
   const auto seq = s.seq[i];
   const auto session = s.session[i];
   if (s.event[i] == kSnapshot) book.clear();
@@ -72,14 +90,13 @@ std::size_t apply_message(OrderBook& book, const Stream& s, std::size_t i) {
 py::dict replay_top(const Array<std::uint8_t>& event, const Array<std::uint8_t>& side,
                     const Array<std::int64_t>& price, const Array<std::int64_t>& size,
                     const Array<std::int64_t>& seq, const Array<std::int64_t>& session,
-                    const Array<std::int64_t>& ts) {
+                    const Array<std::int64_t>& ts, std::int64_t tick, std::size_t window) {
   const Stream s = make_stream(event, side, price, size, seq, session, ts);
   std::vector<std::int64_t> out_ts, bid, bid_size, ask, ask_size, out_session;
-  OrderBook book;
-  std::size_t i = 0;
   {
     py::gil_scoped_release release;
-    while (i < s.n) {
+    with_book(tick, window, [&](auto& book) {
+    for (std::size_t i = 0; i < s.n;) {
       const auto start = i;
       i = apply_message(book, s, i);
       const auto b = book.best(Side::Bid);
@@ -91,6 +108,7 @@ py::dict replay_top(const Array<std::uint8_t>& event, const Array<std::uint8_t>&
       ask.push_back(a ? a->first : 0);
       ask_size.push_back(a ? a->second : 0);
     }
+    });
   }
   py::dict result;
   result["exchange_ts_ns"] = py::array(py::cast(out_ts));
@@ -107,21 +125,23 @@ py::dict replay_top(const Array<std::uint8_t>& event, const Array<std::uint8_t>&
 double replay_rate(const Array<std::uint8_t>& event, const Array<std::uint8_t>& side,
                    const Array<std::int64_t>& price, const Array<std::int64_t>& size,
                    const Array<std::int64_t>& seq, const Array<std::int64_t>& session,
-                   const Array<std::int64_t>& ts) {
+                   const Array<std::int64_t>& ts, std::int64_t tick, std::size_t window) {
   const Stream s = make_stream(event, side, price, size, seq, session, ts);
-  OrderBook book;
   py::gil_scoped_release release;
-  const auto start = std::chrono::steady_clock::now();
-  std::int64_t sink = 0;
-  for (std::size_t i = 0; i < s.n;) {
-    i = apply_message(book, s, i);
-    const auto b = book.best(Side::Bid);
-    const auto a = book.best(Side::Ask);
-    sink += (b ? b->first : 0) - (a ? a->first : 0);
-  }
-  const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
-  // Using the sum keeps the compiler from dropping the reads.
-  return static_cast<double>(s.n) / elapsed.count() + static_cast<double>(sink == 42) * 0.0;
+  return with_book(tick, window, [&](auto& book) {
+    // The book is built before the clock starts, so the flat book's array allocation is not timed.
+    const auto start = std::chrono::steady_clock::now();
+    std::int64_t sink = 0;
+    for (std::size_t i = 0; i < s.n;) {
+      i = apply_message(book, s, i);
+      const auto b = book.best(Side::Bid);
+      const auto a = book.best(Side::Ask);
+      sink += (b ? b->first : 0) - (a ? a->first : 0);
+    }
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+    // Using the sum keeps the compiler from dropping the reads.
+    return static_cast<double>(s.n) / elapsed.count() + static_cast<double>(sink == 42) * 0.0;
+  });
 }
 
 // Replays a stream and captures the book just before each checkpoint time: every message whose
@@ -191,15 +211,16 @@ std::int64_t now_ns() {
 py::dict pipeline(const Array<std::uint8_t>& event, const Array<std::uint8_t>& side,
                   const Array<std::int64_t>& price, const Array<std::int64_t>& size,
                   const Array<std::int64_t>& seq, const Array<std::int64_t>& session,
-                  const Array<std::int64_t>& ts, double rate_per_s) {
+                  const Array<std::int64_t>& ts, double rate_per_s, std::int64_t tick, std::size_t window) {
   const Stream s = make_stream(event, side, price, size, seq, session, ts);
   auto ring = std::make_unique<touchstone::SpscRing<Item, 1 << 16>>();
   std::vector<std::uint32_t> latency(s.n);
-  OrderBook book;
   std::uint64_t checksum = 0;
   double seconds = 0;
+  std::int64_t best_bid = 0, best_ask = 0;
   {
     py::gil_scoped_release release;
+    with_book(tick, window, [&](auto& book) {
     const auto interval_ns = rate_per_s > 0 ? static_cast<std::int64_t>(1e9 / rate_per_s) : 0;
     const auto start = now_ns();
     prefer_fast_core();
@@ -229,15 +250,18 @@ py::dict pipeline(const Array<std::uint8_t>& event, const Array<std::uint8_t>& s
     }
     consumer.join();
     seconds = static_cast<double>(now_ns() - start) / 1e9;
+    const auto b = book.best(Side::Bid);
+    const auto a = book.best(Side::Ask);
+    best_bid = b ? b->first : 0;
+    best_ask = a ? a->first : 0;
+    });
   }
-  const auto b = book.best(Side::Bid);
-  const auto a = book.best(Side::Ask);
   py::dict result;
   result["latency_ns"] = py::array(py::cast(latency));
   result["seconds"] = seconds;
   result["checksum"] = checksum;
-  result["bid"] = b ? b->first : 0;
-  result["ask"] = a ? a->first : 0;
+  result["bid"] = best_bid;
+  result["ask"] = best_ask;
   return result;
 }
 
@@ -299,6 +323,16 @@ PYBIND11_MODULE(touchstone_engine, m) {
       .def("depth", &OrderBook::depth, py::arg("side"))
       .def("levels", &OrderBook::levels, py::arg("side"), py::arg("limit") = 0);
 
+  py::class_<FlatBook>(m, "FlatBook")
+      .def(py::init<std::int64_t, std::size_t>(), py::arg("tick"), py::arg("window") = kWindow)
+      .def("clear", &FlatBook::clear)
+      .def("set", &FlatBook::set, py::arg("side"), py::arg("price"), py::arg("size"))
+      .def("best", &FlatBook::best, py::arg("side"))
+      .def("size_at", &FlatBook::size_at, py::arg("side"), py::arg("price"))
+      .def("depth", &FlatBook::depth, py::arg("side"))
+      .def("levels", &FlatBook::levels, py::arg("side"), py::arg("limit") = 0)
+      .def_property_readonly("recenters", &FlatBook::recenters);
+
   py::class_<touchstone::SimConfig>(m, "SimConfig")
       .def(py::init<>())
       .def_readwrite("naive", &touchstone::SimConfig::naive)
@@ -315,10 +349,12 @@ PYBIND11_MODULE(touchstone_engine, m) {
       .def_readwrite("seed", &touchstone::SimConfig::seed);
 
   m.def("simulate", &simulate, "Our orders against a recorded book, with queue position and latency");
-  m.def("replay_top", &replay_top, "Top of the book after every message");
-  m.def("replay_rate", &replay_rate, "Rows replayed per second");
+  m.def("replay_top", &replay_top, "Top of the book after every message", py::arg("event"), py::arg("side"), py::arg("price"), py::arg("size"), py::arg("seq"), py::arg("session"), py::arg("ts"),
+        py::arg("tick") = 0, py::arg("window") = kWindow);
+  m.def("replay_rate", &replay_rate, "Rows replayed per second", py::arg("event"), py::arg("side"), py::arg("price"), py::arg("size"), py::arg("seq"), py::arg("session"), py::arg("ts"), py::arg("tick") = 0,
+        py::arg("window") = kWindow);
   m.def("replay_checkpoints", &replay_checkpoints, "Book state just before each checkpoint time");
   m.def("pipeline", &pipeline, "Producer to consumer handoff through the ring buffer", py::arg("event"),
         py::arg("side"), py::arg("price"), py::arg("size"), py::arg("seq"), py::arg("session"), py::arg("ts"),
-        py::arg("rate_per_s"));
+        py::arg("rate_per_s"), py::arg("tick") = 0, py::arg("window") = kWindow);
 }
