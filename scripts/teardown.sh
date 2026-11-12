@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Ends the recording, after the held-out week is safely in S3. It stops the recorder, merges and
+# Ends the recording, after the held-out window has closed. It stops the recorder, merges and
 # syncs the last files, confirms that every file on the server is in S3 at the same size, and only
-# then deletes the instance, its disk and the alert function. The bucket is kept.
+# then deletes the instance, its disk, the alert function and the budget's stop action. The bucket
+# and the budget's alert emails are kept.
 #
-#   scripts/teardown.sh           refuses before 2026-12-09 00:00 UTC, then asks for confirmation
+#   scripts/teardown.sh           refuses before 2026-11-15 00:00 UTC, then asks for confirmation
 #   scripts/teardown.sh --check   rehearses the checks and the permissions, and changes nothing
 #   scripts/teardown.sh --early   allows running before that date, for abandoning the recording
 set -euo pipefail
@@ -11,8 +12,9 @@ cd "$(dirname "$0")/.."
 # shellcheck source=scripts/lib.sh
 . scripts/lib.sh
 
-EARLIEST_EPOCH=1796774400 # 2026-12-09 00:00 UTC
+EARLIEST_EPOCH=1794700800 # 2026-11-15 00:00 UTC, when the held-out window closes
 ALERT=touchstone-alert
+BUDGET_NAME=touchstone
 
 mode=${1:-delete}
 case $mode in
@@ -21,7 +23,7 @@ delete | --check | --early) ;;
 esac
 
 if [ "$mode" = delete ] && [ "$(date -u +%s)" -lt "$EARLIEST_EPOCH" ]; then
-    die "the recording must run past 2026-12-08, so this refuses to run before 2026-12-09 00:00 UTC. Use --early only to abandon the recording."
+    die "the held-out window runs to 2026-11-15 00:00 UTC, so this refuses to run before then. Use --early only to abandon the recording."
 fi
 
 resolve_account
@@ -30,6 +32,11 @@ INSTANCE_ID=$(find_instance)
 volumes=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
     --query 'Reservations[0].Instances[0].BlockDeviceMappings[].Ebs.VolumeId' --output text)
 [ -n "$volumes" ] && [ "$volumes" != None ] || die "could not find the instance's disk"
+
+budget_actions() {
+    aws budgets describe-budget-actions-for-budget --account-id "$ACCOUNT" --budget-name "$BUDGET_NAME" \
+        --query 'Actions[].ActionId' --output text 2>/dev/null || true
+}
 
 # Compares the server's finished files with S3, by name and size. The first argument says whether
 # a difference stops the teardown ("strict") or is only reported ("report").
@@ -72,7 +79,7 @@ PYTHON
 
 if [ "$mode" = --check ]; then
     log "rehearsal: nothing will be changed"
-    log "would delete instance ${INSTANCE_ID}, disk(s) ${volumes}, and function ${ALERT}; would keep s3://${BUCKET}"
+    log "would delete instance ${INSTANCE_ID}, disk(s) ${volumes}, function ${ALERT} and budget action(s) $(budget_actions); would keep s3://${BUCKET}"
     compare_with_s3 report
     for attempt in "terminate-instances --instance-ids ${INSTANCE_ID}" "delete-volume --volume-id ${volumes%% *}"; do
         # AWS answers a permitted dry run with an error named DryRunOperation.
@@ -86,7 +93,8 @@ if [ "$mode" = --check ]; then
     exit 0
 fi
 
-echo "This stops recording and permanently deletes instance ${INSTANCE_ID} and disk(s) ${volumes},"
+echo "This stops recording and permanently deletes instance ${INSTANCE_ID}, disk(s) ${volumes},"
+echo "the alert function and the budget's stop action,"
 echo "after confirming that every finished file is in s3://${BUCKET}, which is kept."
 printf 'Type "delete" to continue: '
 read -r answer
@@ -117,4 +125,11 @@ for volume in $volumes; do
     aws ec2 wait volume-available --volume-ids "$volume"
     aws ec2 delete-volume --volume-id "$volume"
 done
-log "done: instance and disk deleted, recordings kept in s3://${BUCKET}"
+
+# The stop action pointed at the instance just deleted. The budget's alert emails are kept.
+log "deleting the budget's stop action"
+for action in $(budget_actions); do
+    [ "$action" = None ] && continue
+    aws budgets delete-budget-action --account-id "$ACCOUNT" --budget-name "$BUDGET_NAME" --action-id "$action" >/dev/null
+done
+log "done: instance, disk, alert and stop action deleted, recordings kept in s3://${BUCKET}"

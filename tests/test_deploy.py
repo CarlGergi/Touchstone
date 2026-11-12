@@ -103,6 +103,8 @@ elif command == "budgets describe-budget-actions-for-budget":
     print("a-1" if exists("budget-action") else "None")
 elif command == "budgets create-budget-action":
     make("budget-action")
+elif command == "budgets delete-budget-action":
+    (state / "budget-action").unlink()
 elif command == "events put-rule":
     print("arn:aws:events:us-east-1:123456789012:rule/touchstone-alert")
 """
@@ -514,7 +516,7 @@ def test_shell_scripts_pass_shellcheck():
     assert result.returncode == 0, result.stdout
 
 
-AFTER_THE_HOLDOUT = "1796774400"  # 2026-12-09 00:00 UTC
+AFTER_THE_HOLDOUT = "1794700800"  # 2026-11-15 00:00 UTC
 SERVER_FILES = "spool-parts 0\nBTC-USD/2026-12-07.parquet 100\nhealth/2026-12-07.jsonl 50"
 S3_FILES = "recordings/BTC-USD/2026-12-07.parquet\t100\nrecordings/health/2026-12-07.jsonl\t50"
 
@@ -527,6 +529,7 @@ def teardown(fakes, *args, answer="delete\n", **extra):
         **extra,
     }
     (fakes.state / "instance").touch()
+    (fakes.state / "budget-action").touch()
     return subprocess.run(
         ["bash", str(REPO / "scripts" / "teardown.sh"), *args],
         env=fakes.env(**settings),
@@ -538,14 +541,14 @@ def teardown(fakes, *args, answer="delete\n", **extra):
 
 def destructive(fakes):
     wanted = {"ec2 terminate-instances", "ec2 delete-volume", "ec2 modify-instance-attribute"}
-    wanted |= {"lambda delete-function", "events delete-rule"}
+    wanted |= {"lambda delete-function", "events delete-rule", "budgets delete-budget-action"}
     return [c for c in fakes.calls() if " ".join(c[:2]) in wanted and "--dry-run" not in c]
 
 
-def test_teardown_refuses_before_the_day_after_the_recording_must_end(fakes):
+def test_teardown_refuses_before_the_held_out_window_closes(fakes):
     result = teardown(fakes, FAKE_EPOCH=str(int(AFTER_THE_HOLDOUT) - 1))
     assert result.returncode != 0
-    assert "2026-12-09" in result.stderr
+    assert "2026-11-15" in result.stderr
     assert fakes.calls() == []
 
 
@@ -573,6 +576,23 @@ def test_teardown_deletes_the_instance_and_disk_after_confirming_s3(fakes):
     )
     assert commands.index("ec2 terminate-instances") < commands.index("ec2 delete-volume")
     assert value(fakes.calls_to("ec2", "delete-volume")[0], "--volume-id") == "vol-1"
+
+
+def test_teardown_deletes_the_budget_stop_action_but_keeps_the_budget(fakes):
+    assert teardown(fakes).returncode == 0
+    commands = [" ".join(c[:2]) for c in fakes.calls()]
+    assert commands.index("ec2 terminate-instances") < commands.index(
+        "budgets delete-budget-action"
+    )
+    [delete] = fakes.calls_to("budgets", "delete-budget-action")
+    assert value(delete, "--action-id") == "a-1"
+    assert not (fakes.state / "budget-action").exists()
+    assert "budgets delete-budget" not in commands
+
+
+def test_teardown_keeps_the_stop_action_if_s3_does_not_match(fakes):
+    assert teardown(fakes, FAKE_S3_LISTING="None").returncode != 0
+    assert fakes.calls_to("budgets", "delete-budget-action") == []
 
 
 def test_teardown_stops_the_alert_first_so_stopping_does_not_raise_it(fakes):
@@ -655,7 +675,7 @@ def test_unknown_teardown_option_is_refused(fakes):
 
 def test_readme_says_when_to_run_the_teardown():
     readme = (REPO / "README.md").read_text()
-    assert "Run `make teardown` after 2026-12-08" in readme
+    assert "Run `make teardown` on or after 2026-11-15" in readme
 
 
 def unit(name):

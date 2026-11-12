@@ -1,16 +1,15 @@
-"""The held-out evaluations, each run once: python -m touchstone.experiments.holdout --final.
+"""The held-out evaluation, run once: python -m touchstone.experiments.holdout --final.
 
-* ``--final``: tests on 2026-11-15 to 2026-11-19, BTC-USD and ETH-USD only, with everything fitted
-  on development data before 2026-11-15. Meant to run on 2026-11-19, once those four days are in.
-* ``--confirm``: tests on 2026-12-01 to 2026-12-08, all four products, with everything fitted on
-  data before 2026-11-19. ZEC-USD and NEAR-USD, added on 2026-11-11, join here.
+It tests on 2026-11-12 to 2026-11-15, BTC-USD and ETH-USD only, with everything fitted on
+development data before 2026-11-12. ZEC-USD and NEAR-USD, added on 2026-11-11, have too little
+development data to fit on, so their results stay development-only.
 
 Fitting reuses the development experiments' own code: the signal variant at each horizon is the one
 with the best mean IC on the fitting days, and the Avellaneda-Stoikov parameters, volatility and
 skew coefficient are chosen as walk-forward chooses them. Nothing is fitted on a test day.
 
-A window's result is written once. Running it again is refused, so the held-out days cannot be
-looked at repeatedly until something looks good. To rerun on purpose, delete the section from the
+The result is written once. Running it again is refused, so the held-out days cannot be looked at
+repeatedly until something looks good. To rerun on purpose, delete the section from the
 results file, and say so wherever the result is reported.
 """
 
@@ -27,15 +26,7 @@ from typing import Any
 import numpy as np
 
 from touchstone import products
-from touchstone.data import (
-    CONFIRM_END,
-    CONFIRM_START,
-    DEVELOPMENT_END,
-    FINAL_END,
-    FINAL_START,
-    add_holdout_flags,
-    load,
-)
+from touchstone.data import DEVELOPMENT_END, FINAL_END, FINAL_START, add_holdout_flags, load
 from touchstone.experiments import fill_model, results, strategies
 from touchstone.experiments.signal_study import day_ics
 from touchstone.experiments.stats import mean_ci
@@ -51,11 +42,6 @@ WINDOWS = {
         "test": (FINAL_START, FINAL_END),
         "fit_before": DEVELOPMENT_END,
         "products": products.ORIGINAL,
-    },
-    "confirm": {
-        "test": (CONFIRM_START, CONFIRM_END),
-        "fit_before": FINAL_END,
-        "products": products.ALL,
     },
 }
 
@@ -80,12 +66,11 @@ def run(
     root: Path,
     *,
     final: bool = False,
-    confirm: bool = False,
     results_path: Path = results.RESULTS,
 ) -> dict[str, Any]:
-    if (final is True) == (confirm is True):
-        raise ValueError("choose exactly one window: final or confirm")
-    window = "final" if final is True else "confirm"
+    if final is not True:
+        raise ValueError("the held-out window opens only with final=True")
+    window = "final"
     section = f"holdout_{window}"
     existing = json.loads(results_path.read_text()) if results_path.exists() else {}
     if section in existing:
@@ -94,7 +79,7 @@ def run(
             "on purpose, delete that section from the results file and report that you did."
         )
     spec = WINDOWS[window]
-    flags = {"final": final is True, "confirm": confirm is True}
+    flags = {"final": True}
     test_start, test_end = spec["test"]
     fast, home = profile(root, "fast_trader"), profile(root, "home")
 
@@ -193,9 +178,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir", type=Path, default=Path("data-server"))
     add_holdout_flags(parser)
     args = parser.parse_args(argv)
-    if not (args.final or args.confirm):
-        parser.error("say which held-out window: --final or --confirm")
-    run(args.data_dir, final=args.final is True, confirm=args.confirm is True)
+    if not args.final:
+        parser.error("the held-out evaluation needs --final, to open the held-out window")
+    run(args.data_dir, final=True)
     return 0
 
 

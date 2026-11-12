@@ -36,9 +36,7 @@ PROFILES = {
 }
 
 
-def round_trips(
-    root: Path, name: str, *, final: bool = False, confirm: bool = False
-) -> list[float]:
+def round_trips(root: Path, name: str, *, final: bool = False) -> list[float]:
     """Returns one profile's round-trip samples in milliseconds, in the order they were taken."""
     if name not in PROFILES:
         raise KeyError(f"unknown latency profile {name!r}: expected one of {sorted(PROFILES)}")
@@ -46,7 +44,7 @@ def round_trips(
     return [
         record["rtt_ms"]
         for record in records
-        if record["event"] == "rtt" and allowed(record["ts_ns"], final=final, confirm=confirm)
+        if record["event"] == "rtt" and allowed(record["ts_ns"], final=final)
     ]
 
 
@@ -54,12 +52,10 @@ def _percentile(ordered: list[float], share: float) -> float | None:
     return ordered[min(int(share * len(ordered)), len(ordered) - 1)] if ordered else None
 
 
-def summary(
-    root: Path, *, final: bool = False, confirm: bool = False
-) -> dict[str, dict[str, object]]:
+def summary(root: Path, *, final: bool = False) -> dict[str, dict[str, object]]:
     result: dict[str, dict[str, object]] = {}
     for name, profile in PROFILES.items():
-        samples = sorted(round_trips(root, name, final=final, confirm=confirm))
+        samples = sorted(round_trips(root, name, final=final))
         result[name] = {
             "label": profile.label,
             "samples": len(samples),
@@ -76,12 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     show.add_argument("--data-dir", type=Path, default=Path("data-server"))
     add_holdout_flags(show)
     args = parser.parse_args(argv)
-    print(
-        json.dumps(
-            summary(args.data_dir, final=args.final is True, confirm=args.confirm is True),
-            indent=2,
-        )
-    )
+    print(json.dumps(summary(args.data_dir, final=args.final is True), indent=2))
     return 0
 
 

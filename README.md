@@ -45,7 +45,7 @@ and measures the gap between "the price touched my quote" and "my order actually
 
 ### First-pass findings
 
-From development data recorded on 2026-11-06 to 2026-11-09. Final development numbers come from the full run on 2026-11-15, and the held-out evaluation follows on 2026-11-19.
+From development data recorded on 2026-11-06 to 2026-11-09. Final numbers, on all development days and on the held-out window, are filled in on 2026-11-15.
 
 | Finding | First pass |
 | --- | --- |
@@ -82,11 +82,11 @@ flowchart LR
 
 | | Milestone | Status |
 | --- | --- | --- |
-| 1 | Recorder | ✅ Done; recording on AWS until 2026-12-08 |
+| 1 | Recorder | ✅ Done; recorded on AWS from 2026-11-06 to 2026-11-15 |
 | 2 | C++ order book, replay engine, ring buffer | ✅ Done |
 | 3 | Queue estimator, latency model, fill simulator | ✅ Done |
 | 4 | Signal study | ✅ Done |
-| 5 | Strategy ladder, P&L attribution, latency sweep | ✅ Done. Final evaluation on 2026-11-19; confirmation after 2026-12-08 |
+| 5 | Strategy ladder, P&L attribution, latency sweep | ✅ Done; held-out evaluation on 2026-11-12 to 2026-11-14 |
 
 ## Quick start
 
@@ -115,28 +115,28 @@ make docker-down
 | `edge_disappears_latency_ms` | For each strategy, the smallest latency in the sweep at which mean P&L stops being positive. Zero means no edge even with no latency. |
 | `best_signal_ic_by_horizon` | Out-of-sample information coefficient of the best signal at 100 ms, 1 s and 10 s, chosen by walk-forward on earlier days only |
 
-The experiments use whole days recorded on the server before 2026-11-15. Speed and latency depend on the machine and on what else it is running: the results record the load average, and they should be rerun on an otherwise idle machine.
+The experiments use whole days recorded on the server before 2026-11-12. Speed and latency depend on the machine and on what else it is running: the results record the load average, and they should be rerun on an otherwise idle machine.
 
-## Development data and the held-out windows
+## Development data and the held-out window
 
 | Window | Dates (UTC) | Products | Use |
 | --- | --- | --- | --- |
-| Development | Everything before 2026-11-15 00:00 | All | All research and every choice of signal and parameters |
-| Final evaluation | 2026-11-15 00:00 to 2026-11-19 00:00 | BTC-USD, ETH-USD | Run once, on 2026-11-19, with everything fitted on development data |
-| Confirmation | 2026-12-01 00:00 to 2026-12-08 00:00 | All four | Run once after the week ends, as a second, later check |
+| Development | Everything before 2026-11-12 00:00 | All | All research and every choice of signal and parameters |
+| Held out | 2026-11-12 00:00 to 2026-11-15 00:00 | BTC-USD, ETH-USD | Run once, with everything fitted on development data |
 
-The windows are enforced in code. `touchstone.data.load` is how research code reads recordings. It refuses any range that touches a window not opened, rather than quietly cutting it short. `final=True` (`--final`) opens the final window, and `confirm=True` (`--confirm`) opens the confirmation week and, since the final window is spent by then, that too. The days between the windows are never read.
+The window is enforced in code. `touchstone.data.load` is how research code reads recordings. It refuses any range that reaches past the development data, rather than quietly cutting it short. `final=True` (`--final`) opens the held-out window, and nothing after it is ever read.
 
 ```bash
 uv run python -m touchstone.data summary BTC-USD                      # development data only
-uv run python -m touchstone.data summary BTC-USD --end 2026-11-19     # refused
-make holdout-final      # on 2026-11-19, once
-make holdout-confirm    # after 2026-12-08, once
+uv run python -m touchstone.data summary BTC-USD --end 2026-11-13     # refused
+make holdout-final      # once, after the 2026-11-15 sync
 ```
 
-Files from closed windows are not even opened, and rows are filtered on all three clocks, so clock skew cannot let a later row through. A test fails if any module outside the recorder reads recordings around the loader. Each held-out evaluation writes its section of the results file once, and refuses to run again, so a window cannot be looked at repeatedly until something looks good. The recorder's own `verify` can read any day, because it reports integrity counts and no prices.
+Files from closed windows are not even opened, and rows are filtered on all three clocks, so clock skew cannot let a later row through. A test fails if any module outside the recorder reads recordings around the loader. The held-out evaluation writes its section of the results file once, and refuses to run again, so the window cannot be looked at repeatedly until something looks good. The recorder's own `verify` can read any day, because it reports integrity counts and no prices.
 
-ZEC-USD and NEAR-USD were added to the recorder on 2026-11-11, to show how the edge depends on spread width. They have only a few development days, are not part of the final evaluation, and join the confirmation.
+**The window was moved once, before any of it was used.** It was first planned for 2026-11-15 to 2026-11-19, with a second check in December. On 2026-11-12 at 03:30 UTC it was moved to 2026-11-12 to 2026-11-14 so the project could finish sooner, and the December check was dropped. This was allowed only because no result had been computed on any of those days. At the time of the move, 2026-11-13 and 2026-11-14 had not happened yet and 2026-11-12 was three and a half hours old. No recording from 2026-11-11 onward had been copied off the server, and the results file used only 2026-11-06 to 2026-11-09. The server's automatic daily summary counts events and gaps on every day, including these, but reads no prices.
+
+ZEC-USD and NEAR-USD were added to the recorder on 2026-11-11, to show how the edge depends on spread width. Their only development data is the part of that day after they were added, less than a day, so their results are development-only, too thin to fit a strategy on, and not part of the held-out evaluation.
 
 ## Limitations
 
@@ -263,9 +263,9 @@ To stop recording temporarily, run `sudo systemctl stop touchstone-recorder` on 
 
 ### Ending the recording
 
-**Run `make teardown` after 2026-12-08, and not before.** The recording has to cover the confirmation week of 2026-12-01 to 2026-12-07, and charges continue until this is run. It refuses to run before 2026-12-09 00:00 UTC, and asks for confirmation.
+**Run `make teardown` on or after 2026-11-15, once the held-out days are copied.** Charges continue until it is run. It refuses to run before 2026-11-15 00:00 UTC, when the held-out window closes, and asks for confirmation.
 
-It stops the recorder, merges and syncs the last files, and confirms that every file on the server is in S3 at the same size. Only then does it delete the instance, its disk and the alert function. If anything does not match, nothing is deleted. The S3 bucket is kept, along with the IAM roles and security group, which cost nothing. `make teardown-check` rehearses the checks and permissions without changing anything.
+It stops the recorder, merges and syncs the last files, and confirms that every file on the server is in S3 at the same size. Only then does it delete the instance, its disk, the alert function and the budget's stop action. If anything does not match, nothing is deleted. The S3 bucket is kept, along with the budget's alert emails, the IAM roles and the security group, which cost nothing. `make teardown-check` rehearses the checks and permissions without changing anything.
 
 ### Testing
 

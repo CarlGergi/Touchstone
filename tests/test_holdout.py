@@ -1,4 +1,4 @@
-"""The held-out evaluations: what each one reads, what it fits on, and that it runs only once."""
+"""The held-out evaluation: what it reads, what it fits on, and that it runs only once."""
 
 import json
 from datetime import UTC, datetime
@@ -41,36 +41,33 @@ def round_trips(root, ms, at):
 
 @pytest.fixture
 async def recorded(tmp_path):
-    for i, day in enumerate(["2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15", "2026-11-16"]):
+    for i, day in enumerate(["2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13"]):
         await record(tmp_path, "BTC-USD", day, seed=i)
-    # A wider-spread product, recorded through the final window and into December.
-    for i, day in enumerate(["2026-11-13", "2026-11-14", "2026-11-16", "2026-12-02"]):
+    # A wider-spread product, recorded through the held-out window.
+    for i, day in enumerate(["2026-11-11", "2026-11-12", "2026-11-13"]):
         await record(tmp_path, "ZEC-USD", day, seed=10 + i)
-    await record(tmp_path, "BTC-USD", "2026-12-02", seed=20)
-    # A day between the windows that must never be opened.
-    gap = daily_path(tmp_path, "BTC-USD", "2026-11-25")
-    gap.parent.mkdir(parents=True, exist_ok=True)
-    gap.write_bytes(b"not parquet: reading this file would fail")
+    # A day after the window, which must never be opened.
+    later = daily_path(tmp_path, "BTC-USD", "2026-11-16")
+    later.parent.mkdir(parents=True, exist_ok=True)
+    later.write_bytes(b"not parquet: reading this file would fail")
     round_trips(tmp_path, [14.0, 15.0, 16.0], ns("2026-11-10"))
     round_trips(tmp_path / "latency-profiles" / "home", [36.0, 37.0, 40.0], ns("2026-11-10"))
     return tmp_path
 
 
-async def test_a_window_must_be_chosen(recorded):
-    with pytest.raises(ValueError, match="exactly one"):
+async def test_the_window_must_be_opened_explicitly(recorded):
+    with pytest.raises(ValueError, match="final=True"):
         holdout.run(recorded, results_path=recorded / "r.json")
-    with pytest.raises(ValueError, match="exactly one"):
-        holdout.run(recorded, final=True, confirm=True, results_path=recorded / "r.json")
 
 
-async def test_final_fits_on_development_days_and_tests_on_the_four_days(recorded):
+async def test_final_fits_on_development_days_and_tests_on_the_held_out_days(recorded):
     out = holdout.run(recorded, final=True, results_path=recorded / "r.json")
     [choice] = out["choices"]
     assert choice["product"] == "BTC-USD"
-    assert choice["fit_days"] == ["2026-11-12", "2026-11-13", "2026-11-14"]
-    assert choice["test_days"] == ["2026-11-15", "2026-11-16"]
+    assert choice["fit_days"] == ["2026-11-09", "2026-11-10", "2026-11-11"]
+    assert choice["test_days"] == ["2026-11-12", "2026-11-13"]
     assert set(choice["signal_by_horizon"]) == {"0.1s", "1s", "10s"}
-    assert out["window"]["test"] == ["2026-11-15T00:00:00+00:00", "2026-11-19T00:00:00+00:00"]
+    assert out["window"]["test"] == ["2026-11-12T00:00:00+00:00", "2026-11-15T00:00:00+00:00"]
 
 
 async def test_wider_spread_products_stay_out_of_the_final_window(recorded):
@@ -101,23 +98,16 @@ async def test_each_window_runs_only_once(recorded):
     assert json.loads(path.read_text())["holdout_final"] == first
 
 
-async def test_confirmation_includes_the_wider_spread_products(recorded):
-    out = holdout.run(recorded, confirm=True, results_path=recorded / "r.json")
-    by_product = {c["product"]: c for c in out["choices"]}
-    assert set(by_product) == {"BTC-USD", "ZEC-USD"}
-    # ZEC fits on everything before the final window ends, which for it was never held out.
-    assert by_product["ZEC-USD"]["fit_days"] == ["2026-11-13", "2026-11-14", "2026-11-16"]
-    assert by_product["ZEC-USD"]["test_days"] == ["2026-12-02"]
-    assert by_product["BTC-USD"]["test_days"] == ["2026-12-02"]
-
-
 async def test_product_without_enough_fitting_days_is_skipped_and_reported(recorded):
-    await record(recorded, "NEAR-USD", "2026-12-02", seed=30)
-    out = holdout.run(recorded, confirm=True, results_path=recorded / "r.json")
-    assert [s["product"] for s in out["skipped"]] == ["ETH-USD", "NEAR-USD"]
+    await record(recorded, "ETH-USD", "2026-11-11", seed=30)
+    await record(recorded, "ETH-USD", "2026-11-12", seed=31)
+    out = holdout.run(recorded, final=True, results_path=recorded / "r.json")
+    [skipped] = out["skipped"]
+    assert skipped["product"] == "ETH-USD"
+    assert skipped["fit_days"] == ["2026-11-11"]
 
 
 def test_command_insists_on_a_window(capsys):
     with pytest.raises(SystemExit):
         holdout.main([])
-    assert "--final or --confirm" in capsys.readouterr().err
+    assert "--final" in capsys.readouterr().err

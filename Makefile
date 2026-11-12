@@ -1,4 +1,4 @@
-.PHONY: install test lint format reproduce experiments holdout-final holdout-confirm record docker-build docker-up docker-down docker-logs deploy report teardown teardown-check save-home-profile pull-data
+.PHONY: install test lint format reproduce experiments holdout-final record docker-build docker-up docker-down docker-logs deploy report teardown teardown-check save-home-profile pull-data
 
 install:
 	uv sync
@@ -22,12 +22,9 @@ reproduce: test experiments
 experiments: install
 	uv run python -m touchstone.experiments --data-dir data-server
 
-# Each held-out window is evaluated once. Run the final one on 2026-11-19, the other after 2026-12-08.
+# The held-out window, 2026-11-12 to 2026-11-15, is evaluated once, after the 2026-11-15 sync.
 holdout-final: install
 	uv run python -m touchstone.experiments.holdout --final --data-dir data-server
-
-holdout-confirm: install
-	uv run python -m touchstone.experiments.holdout --confirm --data-dir data-server
 
 record: install
 	uv run python -m touchstone.recorder run --data-dir data
