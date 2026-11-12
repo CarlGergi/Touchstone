@@ -1,0 +1,32 @@
+name: CI
+
+# Builds the C++ engine, then runs lint and the offline test suite. Every test runs against
+# local fakes (a fake exchange on localhost, a fake AWS CLI), so nothing here needs credentials
+# or touches a paid service.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch cancels the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Build the engine and install
+        run: uv sync --locked
+      - name: Lint
+        run: make lint
+      - name: Test
+        run: uv run pytest

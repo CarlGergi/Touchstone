@@ -23,12 +23,14 @@ and measures the gap between "the price touched my quote" and "my order actually
 ![CMake](https://img.shields.io/badge/CMake-build-064F8C?style=for-the-badge&logo=cmake&logoColor=white)
 ![uv](https://img.shields.io/badge/uv-workspace-DE5FE9?style=for-the-badge&logo=uv&logoColor=white)
 
-![Tests](https://img.shields.io/badge/tests-367%20passing-2EA043?style=flat-square&logo=pytest&logoColor=white)
+[![CI](https://github.com/CarlGergi/Touchstone/actions/workflows/ci.yml/badge.svg)](https://github.com/CarlGergi/Touchstone/actions/workflows/ci.yml)
+![Tests](https://img.shields.io/badge/tests-377%20passing-2EA043?style=flat-square&logo=pytest&logoColor=white)
 ![Reproducible](https://img.shields.io/badge/reproducible-make%20reproduce-2EA043?style=flat-square)
 ![Hold-out](https://img.shields.io/badge/hold--out-enforced%20in%20code-8250DF?style=flat-square)
 ![Recording](https://img.shields.io/badge/recording-24%2F7%20on%20AWS-FF9900?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
-[Highlights](#highlights) · [Architecture](#architecture) · [Results](#results) · [Hold-out](#development-data-and-the-held-out-windows) · [Limitations](#limitations) · [Recorder](#recorder)
+[Highlights](#highlights) · [Architecture](#architecture) · [Results](#results) · [Hold-out](#development-data-and-the-held-out-windows) · [Limitations](#limitations) · [Recorder](#recorder) · [License](#license)
 
 </div>
 
@@ -270,3 +272,7 @@ It stops the recorder, merges and syncs the last files, and confirms that every 
 ### Testing
 
 The tests run the real recorder over a real WebSocket against `tests/fake_feed.py`, which speaks the same protocol, misbehaves on demand, and keeps the true book after every step. Its faults include dropped messages on any channel, aborted and silent connections, garbage, replayed messages, refused connections, and oversized snapshots. The main check replays every recorded session and compares the book with the truth after every message, including under a seeded storm of random faults. Other tests kill the recorder with `SIGKILL` and crash the daily merge at each step.
+
+## License
+
+[MIT](LICENSE) © 2026 Carl Gergi
