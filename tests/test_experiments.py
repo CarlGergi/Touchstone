@@ -10,7 +10,7 @@ import pytest
 
 from test_holdout import record, round_trips
 from touchstone.experiments import __main__ as experiments
-from touchstone.experiments import engine_bench
+from touchstone.experiments import engine_bench, figures
 from touchstone.recorder.storage import daily_path
 
 
@@ -60,3 +60,28 @@ async def test_one_command_writes_every_headline_number(recorded, quick, monkeyp
     zec = [r for r in out["fill_model"]["per_product_day"] if r["product"] == "ZEC-USD"]
     assert [r["day"] for r in zec] == ["2026-11-11"] * len(zec)
     assert "ZEC-USD" in out["fill_model"]["by_product"]
+
+
+async def test_figures_are_drawn_from_the_results_and_repeat_exactly(recorded, quick, monkeypatch):
+    monkeypatch.chdir(recorded)
+    assert experiments.main(["--data-dir", str(recorded)]) == 0
+    out = json.loads((recorded / "results" / "results.json").read_text())
+
+    first = figures.draw(out, recorded / "a")
+    second = figures.draw(out, recorded / "b")
+    # No held-out section yet, so no held-out figure.
+    assert [p.name for p in first] == [n for n, *_ in figures.FIGURES if n != "holdout_ic.png"]
+    for a, b in zip(first, second, strict=True):
+        assert a.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+        assert a.read_bytes() == b.read_bytes()
+
+    # Once the held-out evaluation has run, its figure is drawn too.
+    out["holdout_final"] = {"signals": out["signals"]["best_signal_ic_by_horizon"]}
+    names = [p.name for p in figures.draw(out, recorded / "c")]
+    assert names[-1] == "holdout_ic.png"
+
+
+def test_every_figure_has_alt_text():
+    for name, _, alt, _ in figures.FIGURES:
+        assert name.endswith(".png")
+        assert len(alt) > 40

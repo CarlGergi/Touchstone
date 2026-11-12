@@ -1,4 +1,4 @@
-.PHONY: install test lint format reproduce experiments holdout-final record docker-build docker-up docker-down docker-logs deploy report teardown teardown-check save-home-profile pull-data
+.PHONY: install test lint format reproduce experiments figures holdout-final record docker-build docker-up docker-down docker-logs deploy report teardown teardown-check save-home-profile pull-data
 
 install:
 	uv sync
@@ -17,10 +17,14 @@ format: install
 
 # Rebuilds every result from scratch: the tests, then every experiment on the recorded days in
 # data-server/ (run make pull-data first), into results/results.json. Held-out data is never read.
-reproduce: test experiments
+reproduce: test experiments figures
 
 experiments: install
 	uv run python -m touchstone.experiments --data-dir data-server
+
+# README figures, drawn from results/results.json into docs/images.
+figures: install
+	uv run python -m touchstone.experiments.figures
 
 # The held-out window, 2026-11-12 to 2026-11-15, is evaluated once, after the 2026-11-15 sync.
 holdout-final: install
