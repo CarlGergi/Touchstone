@@ -711,10 +711,10 @@ def test_deployment_settings_stay_out_of_git():
     assert "/data-server/" in ignored
 
 
-def pull(fakes, tmp_path, **extra):
+def pull(fakes, tmp_path, *args, **extra):
     fakes.deploy_env.write_text("NTFY_TOPIC=topic\n")
     return subprocess.run(
-        ["bash", str(REPO / "scripts" / "pull-data.sh")],
+        ["bash", str(REPO / "scripts" / "pull-data.sh"), *args],
         env=fakes.env(**extra),
         capture_output=True,
         text=True,
@@ -736,9 +736,75 @@ def test_pull_data_copies_recordings_and_profiles_down(fakes, tmp_path):
     assert not (fakes.state / "curl.log").exists()
 
 
+# Days far in the future, so the real data-server/ never already holds them.
+FUTURE_LISTING = (
+    "recordings/BTC-USD/2099-01-01.parquet\t1000000000\n"
+    "recordings/BTC-USD/2099-01-02.parquet\t2000000000\n"
+    "recordings/health/2099-01-02.jsonl\t1000"
+)
+
+
+def test_pull_data_copies_only_the_days_asked_for(fakes, tmp_path):
+    result = pull(
+        fakes,
+        tmp_path,
+        "--from",
+        "2099-01-02",
+        "--to",
+        "2099-01-03",
+        FAKE_S3_LISTING=FUTURE_LISTING,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "2 file(s), 2.00 GB" in result.stdout
+    [recordings, _profiles] = fakes.calls_to("s3", "sync")
+    assert recordings[recordings.index("--exclude") :] == [
+        "--exclude",
+        "*",
+        "--include",
+        "*2099-01-02*",
+    ]
+
+
+def test_pull_data_size_only_downloads_nothing(fakes, tmp_path):
+    result = pull(fakes, tmp_path, "--size", FAKE_S3_LISTING=FUTURE_LISTING)
+    assert result.returncode == 0, result.stderr
+    assert "3 file(s), 3.00 GB" in result.stdout
+    assert not fakes.calls_to("s3", "sync")
+    assert not (fakes.state / "curl.log").exists()
+
+
+def test_pull_data_refuses_a_download_above_the_limit(fakes, tmp_path):
+    huge = "recordings/BTC-USD/2099-01-01.parquet\t25000000000"
+    result = pull(fakes, tmp_path, FAKE_S3_LISTING=huge)
+    assert result.returncode != 0
+    assert not fakes.calls_to("s3", "sync")
+
+
 def test_failed_pull_pushes_an_alert(fakes, tmp_path):
     result = pull(fakes, tmp_path, FAKE_NO_CREDENTIALS="1")
     assert result.returncode != 0
     log = (fakes.state / "curl.log").read_text()
     assert "pull-data failed" in log
     assert "ntfy.sh/topic" in log
+
+
+def test_final_stops_before_the_evaluation_if_a_held_out_day_is_missing(fakes, tmp_path):
+    fakes.deploy_env.write_text("NTFY_TOPIC=topic\n")
+    data = tmp_path / "data"
+    for day in ("2026-11-12", "2026-11-13", "2026-11-14"):
+        (data / "BTC-USD").mkdir(parents=True, exist_ok=True)
+        (data / "BTC-USD" / f"{day}.parquet").write_bytes(b"x")
+    (data / "ETH-USD").mkdir()
+    (data / "ETH-USD" / "2026-11-12.parquet").write_bytes(b"x")
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts" / "final.sh")],
+        env=fakes.env(DATA_DIR=str(data), FAKE_S3_LISTING="None"),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "ETH-USD 2026-11-13 ETH-USD 2026-11-14" in result.stderr
+    assert "one-time held-out evaluation" not in result.stdout
+    # Only the held-out days were asked for.
+    [recordings, _profiles] = fakes.calls_to("s3", "sync")
+    assert recordings.count("--include") == 3

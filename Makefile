@@ -1,4 +1,4 @@
-.PHONY: install test lint format reproduce experiments figures holdout-final record docker-build docker-up docker-down docker-logs deploy report teardown teardown-check save-home-profile pull-data
+.PHONY: install test lint format reproduce experiments figures bench readme final holdout-final record docker-build docker-up docker-down docker-logs deploy report teardown teardown-check save-home-profile pull-data
 
 install:
 	uv sync
@@ -17,7 +17,7 @@ format: install
 
 # Rebuilds every result from scratch: the tests, then every experiment on the recorded days in
 # data-server/ (run make pull-data first), into results/results.json. Held-out data is never read.
-reproduce: test experiments figures
+reproduce: test experiments figures readme
 
 experiments: install
 	uv run python -m touchstone.experiments --data-dir data-server
@@ -25,6 +25,20 @@ experiments: install
 # README figures, drawn from results/results.json into docs/images.
 figures: install
 	uv run python -m touchstone.experiments.figures
+
+# The measured numbers in README.md, from results/results.json.
+readme: install
+	uv run python -m touchstone.experiments.readme
+
+# Replay speed and ring latency again, alone, on each product's last two development days: a few
+# minutes, for an otherwise idle machine. Counts and audits from make experiments are kept.
+bench: install
+	uv run python -m touchstone.experiments.engine_bench --data-dir data-server --last-days 2
+	$(MAKE) figures readme
+
+# Once, after the 2026-11-15 00:30 UTC sync: pull the held-out days, evaluate, redraw, fill README.
+final: install
+	scripts/final.sh
 
 # The held-out window, 2026-11-12 to 2026-11-15, is evaluated once, after the 2026-11-15 sync.
 holdout-final: install

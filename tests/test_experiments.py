@@ -85,3 +85,26 @@ def test_every_figure_has_alt_text():
     for name, _, alt, _ in figures.FIGURES:
         assert name.endswith(".png")
         assert len(alt) > 40
+
+
+async def test_the_short_benchmark_replaces_only_the_timing(recorded, quick, monkeypatch):
+    monkeypatch.chdir(recorded)
+    assert experiments.main(["--data-dir", str(recorded)]) == 0
+    path = recorded / "results" / "results.json"
+    before = json.loads(path.read_text())["engine"]
+
+    engine_bench.bench(path, recorded, last_days=1)
+    after = json.loads(path.read_text())
+
+    engine = after["engine"]
+    assert engine["timing_days"] == {"BTC-USD": ["2026-11-11"], "ETH-USD": ["2026-11-11"]}
+    # The counts and audits cover every development day and are kept as they were.
+    for key in ("days", "total_events_recorded", "book_vs_audit_snapshots"):
+        assert engine[key] == before[key]
+    assert "load_average_1m_before" in engine["machine"]
+    assert after["headline"]["replay_events_per_s"] == engine["replay_events_per_s_cpp"]
+
+
+def test_the_short_benchmark_needs_the_full_run_first(tmp_path):
+    with pytest.raises(SystemExit):
+        engine_bench.bench(tmp_path / "results.json", tmp_path, last_days=1)
