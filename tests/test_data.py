@@ -25,7 +25,7 @@ PRODUCT = "BTC-USD"
 SECOND = 10**9
 DAY = 86_400 * SECOND
 CUT = DEVELOPMENT_END_NS
-FINAL_CUT = CUT + 3 * DAY
+FINAL_CUT = CUT + DAY + (17 * 3600 + 59 * 60 + 50) * SECOND  # the recorder stopped
 LATER = CUT + 20 * DAY  # after the held-out window: never read
 
 
@@ -69,7 +69,7 @@ def locals_of(frame):
 def test_windows_are_the_agreed_dates():
     assert datetime(2026, 11, 12, tzinfo=UTC) == DEVELOPMENT_END
     assert FINAL_START == DEVELOPMENT_END
-    assert datetime(2026, 11, 15, tzinfo=UTC) == FINAL_END, "three full days, Nov 12 to 14"
+    assert datetime(2026, 11, 13, 17, 59, 50, tzinfo=UTC) == FINAL_END, "until the recorder stopped"
     assert ns(FINAL_END) == FINAL_CUT
 
 
@@ -78,7 +78,7 @@ async def test_development_only_by_default(tmp_path):
     assert locals_of(load(tmp_path, PRODUCT)) == [CUT - 1]
 
 
-async def test_final_opens_the_three_days_and_nothing_after(tmp_path):
+async def test_final_opens_the_window_and_nothing_after(tmp_path):
     await recorded_everywhere(tmp_path)
     with pytest.warns(UserWarning, match="held-out window"):
         frame = load(tmp_path, PRODUCT, final=True)
@@ -93,7 +93,9 @@ async def test_final_opens_the_three_days_and_nothing_after(tmp_path):
         ({"end": "2026-11-11T19:00:00.000001-05:00"}, {}),
         ({"end": datetime(2026, 11, 11, 20, 0, tzinfo=timezone(timedelta(hours=-5)))}, {}),
         ({"start": "2026-12-01"}, {}),
-        ({"end": "2026-11-15T00:00:00.000001Z"}, {"final": True}),
+        ({"end": "2026-11-13T17:59:50.000001Z"}, {"final": True}),
+        ({"start": "2026-11-13T18:00:00Z"}, {"final": True}),
+        ({"start": "2026-11-14"}, {"final": True}),
         ({"start": "2026-12-01"}, {"final": True}),
         ({"start": "2026-11-16", "end": "2026-11-17"}, {"final": True}),
     ],
@@ -119,7 +121,7 @@ async def test_a_range_ending_exactly_at_the_cutoff_is_allowed(tmp_path, end):
 
 async def test_closed_windows_files_are_not_even_opened(tmp_path):
     await store(tmp_path, row(CUT - 1))
-    for day in ("2026-11-12", "2026-11-15", "2026-12-01"):
+    for day in ("2026-11-12", "2026-11-14", "2026-12-01"):
         path = daily_path(tmp_path, PRODUCT, day)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"not parquet: reading this file would fail")

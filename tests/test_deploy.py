@@ -516,7 +516,7 @@ def test_shell_scripts_pass_shellcheck():
     assert result.returncode == 0, result.stdout
 
 
-AFTER_THE_HOLDOUT = "1794700800"  # 2026-11-15 00:00 UTC
+AFTER_THE_HOLDOUT = "1794592790"  # 2026-11-13 17:59:50 UTC
 SERVER_FILES = "spool-parts 0\nBTC-USD/2026-12-07.parquet 100\nhealth/2026-12-07.jsonl 50"
 S3_FILES = "recordings/BTC-USD/2026-12-07.parquet\t100\nrecordings/health/2026-12-07.jsonl\t50"
 
@@ -548,13 +548,7 @@ def destructive(fakes):
 def test_teardown_refuses_before_the_held_out_window_closes(fakes):
     result = teardown(fakes, FAKE_EPOCH=str(int(AFTER_THE_HOLDOUT) - 1))
     assert result.returncode != 0
-    assert "2026-11-15" in result.stderr
-    assert fakes.calls() == []
-
-
-def test_teardown_refuses_today(fakes):
-    result = teardown(fakes, FAKE_EPOCH="")
-    assert result.returncode != 0
+    assert "2026-11-13 17:59:50" in result.stderr
     assert fakes.calls() == []
 
 
@@ -675,7 +669,7 @@ def test_unknown_teardown_option_is_refused(fakes):
 
 def test_readme_says_when_to_run_the_teardown():
     readme = (REPO / "README.md").read_text()
-    assert "Run `make teardown` on or after 2026-11-15" in readme
+    assert "Run `make teardown` after 2026-11-13 17:59:50 UTC" in readme
 
 
 def unit(name):
@@ -791,7 +785,7 @@ def test_failed_pull_pushes_an_alert(fakes, tmp_path):
 def test_final_stops_before_the_evaluation_if_a_held_out_day_is_missing(fakes, tmp_path):
     fakes.deploy_env.write_text("NTFY_TOPIC=topic\n")
     data = tmp_path / "data"
-    for day in ("2026-11-12", "2026-11-13", "2026-11-14"):
+    for day in ("2026-11-12", "2026-11-13"):
         (data / "BTC-USD").mkdir(parents=True, exist_ok=True)
         (data / "BTC-USD" / f"{day}.parquet").write_bytes(b"x")
     (data / "ETH-USD").mkdir()
@@ -803,8 +797,9 @@ def test_final_stops_before_the_evaluation_if_a_held_out_day_is_missing(fakes, t
         text=True,
     )
     assert result.returncode != 0
-    assert "ETH-USD 2026-11-13 ETH-USD 2026-11-14" in result.stderr
+    assert "ETH-USD 2026-11-13" in result.stderr
+    assert "2026-11-14" not in result.stderr
     assert "one-time held-out evaluation" not in result.stdout
     # Only the held-out days were asked for.
     [recordings, _profiles] = fakes.calls_to("s3", "sync")
-    assert recordings.count("--include") == 3
+    assert recordings.count("--include") == 2

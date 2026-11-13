@@ -3,11 +3,12 @@
 Two windows, both in UTC:
 
 * Development: everything before 2026-11-12 00:00. All research.
-* Held-out evaluation: 2026-11-12 00:00 to 2026-11-15 00:00, three full days, evaluated once.
+* Held-out evaluation: 2026-11-12 00:00 to 2026-11-13 17:59:50, when the recorder was stopped:
+  one full day and most of a second, evaluated once.
   Opened only with ``final=True`` (``--final``).
 
-Anything from 2026-11-15 onward is never read. A range that touches a window that is not open is
-refused, rather than quietly cut short.
+Nothing was recorded after the end of the held-out window, and nothing after it is ever read. A
+range that touches a window that is not open is refused, rather than quietly cut short.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from touchstone.recorder.storage import recorded_days, scan_days, utc_day
 
 DEVELOPMENT_END = datetime(2026, 11, 12, tzinfo=UTC)
 FINAL_START = DEVELOPMENT_END
-FINAL_END = datetime(2026, 11, 15, tzinfo=UTC)
+FINAL_END = datetime(2026, 11, 13, 17, 59, 50, tzinfo=UTC)  # the recorder's stop
 
 _TIMESTAMPS = ("local_ts_ns", "server_ts_ns", "exchange_ts_ns")
 _FOREVER = 2**63 - 1
@@ -125,7 +126,7 @@ def add_holdout_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--final",
         action="store_true",
-        help="also read 2026-11-12 to 2026-11-15, for the held-out evaluation only",
+        help="also read 2026-11-12 00:00 to 2026-11-13 17:59:50, for the held-out evaluation only",
     )
 
 

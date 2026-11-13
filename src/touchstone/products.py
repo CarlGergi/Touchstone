@@ -6,7 +6,8 @@ Order sizes are worth roughly $25 to $75, small next to what usually rests at th
 BTC and ETH trade at a spread of one to a few cents, a tiny fraction of their price, so any edge
 from the spread is small next to adverse selection. ZEC and NEAR were added on 2026-11-11 because
 their spreads are several ticks and a few basis points wide, to show how the edge depends on spread
-width. They are not part of the 2026-11-15 to 2026-11-19 evaluation; they join the December one.
+width. They have too little development data to fit on, so they are not part of the held-out
+evaluation.
 """
 
 from __future__ import annotations

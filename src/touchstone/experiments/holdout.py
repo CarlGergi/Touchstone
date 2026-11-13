@@ -1,8 +1,9 @@
 """The held-out evaluation, run once: python -m touchstone.experiments.holdout --final.
 
-It tests on 2026-11-12 to 2026-11-15, BTC-USD and ETH-USD only, with everything fitted on
-development data before 2026-11-12. ZEC-USD and NEAR-USD, added on 2026-11-11, have too little
-development data to fit on, so their results stay development-only.
+It tests on 2026-11-12 00:00 to 2026-11-13 17:59:50 UTC, when the recorder was stopped, BTC-USD and
+ETH-USD only, with everything fitted on development data before 2026-11-12. ZEC-USD and NEAR-USD,
+added on 2026-11-11, have too little development data to fit on, so they are used for development
+only.
 
 Fitting reuses the development experiments' own code: the signal variant at each horizon is the one
 with the best mean IC on the fitting days, and the Avellaneda-Stoikov parameters, volatility and
@@ -19,7 +20,7 @@ import argparse
 import gc
 import json
 import warnings
-from datetime import date, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -46,13 +47,19 @@ WINDOWS = {
 }
 
 
+def _day_start(day: str) -> datetime:
+    return datetime.fromisoformat(day).replace(tzinfo=UTC)
+
+
 def _days(root: Path, product: str, start, end) -> list[str]:
-    first, last = start.date().isoformat(), end.date().isoformat()
-    return [d for d in recorded_days(root, product) if first <= d < last]
+    """Recorded days that overlap [start, end), including a last day the window ends inside."""
+    first = start.date().isoformat()
+    return [d for d in recorded_days(root, product) if first <= d and _day_start(d) < end]
 
 
 def _market(root: Path, product: str, day: str, flags: dict[str, bool]):
-    end = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+    # A window can end inside a day, as the held-out one ends when the recorder stopped.
+    end = min(_day_start(day) + timedelta(days=1), FINAL_END)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         frame = load(root, product, start=day, end=end, **flags).collect()

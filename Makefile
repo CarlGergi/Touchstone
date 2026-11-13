@@ -36,11 +36,11 @@ bench: install
 	uv run python -m touchstone.experiments.engine_bench --data-dir data-server --last-days 2
 	$(MAKE) figures readme
 
-# Once, after the 2026-11-15 00:30 UTC sync: pull the held-out days, evaluate, redraw, fill README.
+# Once, after the recorder is stopped and synced: pull the held-out days, evaluate, redraw, fill README.
 final: install
 	scripts/final.sh
 
-# The held-out window, 2026-11-12 to 2026-11-15, is evaluated once, after the 2026-11-15 sync.
+# The held-out window, 2026-11-12 00:00 to 2026-11-13 17:59:50 UTC, is evaluated once.
 holdout-final: install
 	uv run python -m touchstone.experiments.holdout --final --data-dir data-server
 

@@ -47,7 +47,7 @@ async def recorded(tmp_path):
     for i, day in enumerate(["2026-11-11", "2026-11-12", "2026-11-13"]):
         await record(tmp_path, "ZEC-USD", day, seed=10 + i)
     # A day after the window, which must never be opened.
-    later = daily_path(tmp_path, "BTC-USD", "2026-11-16")
+    later = daily_path(tmp_path, "BTC-USD", "2026-11-14")
     later.parent.mkdir(parents=True, exist_ok=True)
     later.write_bytes(b"not parquet: reading this file would fail")
     round_trips(tmp_path, [14.0, 15.0, 16.0], ns("2026-11-10"))
@@ -67,7 +67,7 @@ async def test_final_fits_on_development_days_and_tests_on_the_held_out_days(rec
     assert choice["fit_days"] == ["2026-11-09", "2026-11-10", "2026-11-11"]
     assert choice["test_days"] == ["2026-11-12", "2026-11-13"]
     assert set(choice["signal_by_horizon"]) == {"0.1s", "1s", "10s"}
-    assert out["window"]["test"] == ["2026-11-12T00:00:00+00:00", "2026-11-15T00:00:00+00:00"]
+    assert out["window"]["test"] == ["2026-11-12T00:00:00+00:00", "2026-11-13T17:59:50+00:00"]
 
 
 async def test_wider_spread_products_stay_out_of_the_final_window(recorded):
@@ -111,3 +111,12 @@ def test_command_insists_on_a_window(capsys):
     with pytest.raises(SystemExit):
         holdout.main([])
     assert "--final" in capsys.readouterr().err
+
+
+def test_a_window_that_ends_inside_a_day_tests_that_day_up_to_the_end(recorded):
+    from touchstone.data import FINAL_END, FINAL_START
+
+    days = holdout._days(recorded, "BTC-USD", FINAL_START, FINAL_END)
+    assert days == ["2026-11-12", "2026-11-13"]
+    market = holdout._market(recorded, "BTC-USD", "2026-11-13", {"final": True})
+    assert market is not None

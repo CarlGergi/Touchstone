@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The held-out evaluation, start to finish, run once after the 2026-11-15 00:30 UTC sync:
-# copies only 2026-11-12 to 2026-11-14 from S3, checks that every held-out day arrived, runs the
+# The held-out evaluation, start to finish, run once after the recorder is stopped and its last files
+# synced: copies only 2026-11-12 and 2026-11-13 from S3, checks that every held-out day arrived, runs the
 # one-time evaluation, then redraws the figures and writes the numbers into README.md.
 # Nothing is committed or deleted.
 set -euo pipefail
@@ -9,10 +9,10 @@ cd "$(dirname "$0")/.."
 . scripts/lib.sh
 
 DATA_DIR=${DATA_DIR:-data-server}
-DAYS=(2026-11-12 2026-11-13 2026-11-14)
+DAYS=(2026-11-12 2026-11-13)
 HELD_OUT_PRODUCTS=(BTC-USD ETH-USD)
 
-scripts/pull-data.sh --from "${DAYS[0]}" --to 2026-11-15
+scripts/pull-data.sh --from "${DAYS[0]}" --to 2026-11-14
 
 # The evaluation can run only once, so a day missing now would be missing for good.
 missing=()
@@ -22,7 +22,7 @@ for product in "${HELD_OUT_PRODUCTS[@]}"; do
     done
 done
 if [ ${#missing[@]} -gt 0 ]; then
-    die "held-out days not copied yet, so the evaluation was not started: ${missing[*]}. The server copies each day at 00:30 UTC the next day."
+    die "held-out days not copied yet, so the evaluation was not started: ${missing[*]}. Stop the recorder and sync its last files first."
 fi
 
 log "running the one-time held-out evaluation"

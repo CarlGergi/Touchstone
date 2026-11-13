@@ -4,7 +4,7 @@
 # then deletes the instance, its disk, the alert function and the budget's stop action. The bucket
 # and the budget's alert emails are kept.
 #
-#   scripts/teardown.sh           refuses before 2026-11-15 00:00 UTC, then asks for confirmation
+#   scripts/teardown.sh           refuses before 2026-11-13 17:59:50 UTC, then asks for confirmation
 #   scripts/teardown.sh --check   rehearses the checks and the permissions, and changes nothing
 #   scripts/teardown.sh --early   allows running before that date, for abandoning the recording
 set -euo pipefail
@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 # shellcheck source=scripts/lib.sh
 . scripts/lib.sh
 
-EARLIEST_EPOCH=1794700800 # 2026-11-15 00:00 UTC, when the held-out window closes
+EARLIEST_EPOCH=1794592790 # 2026-11-13 17:59:50 UTC, when the held-out window closes
 ALERT=touchstone-alert
 BUDGET_NAME=touchstone
 
@@ -23,7 +23,7 @@ delete | --check | --early) ;;
 esac
 
 if [ "$mode" = delete ] && [ "$(date -u +%s)" -lt "$EARLIEST_EPOCH" ]; then
-    die "the held-out window runs to 2026-11-15 00:00 UTC, so this refuses to run before then. Use --early only to abandon the recording."
+    die "the held-out window runs to 2026-11-13 17:59:50 UTC, so this refuses to run before then. Use --early only to abandon the recording."
 fi
 
 resolve_account

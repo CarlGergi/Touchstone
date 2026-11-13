@@ -237,7 +237,7 @@ def holdout_ic(out: dict[str, Any]) -> Figure:
     fig, ax = _new(3.0)
     width = 0.36
     for i, (label, source) in enumerate(
-        [("Development, walk-forward", dev), ("Held-out window, Nov 12-14", held)]
+        [("Development, walk-forward", dev), ("Held-out window, Nov 12-13", held)]
     ):
         cells = [source[h] for h in horizons]
         x = [j + (i - 0.5) * width for j in range(len(horizons))]
